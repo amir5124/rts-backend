@@ -28,10 +28,21 @@ exports.register = async (req, res) => {
             await db.execute('INSERT INTO mitra_wallets (mitra_id) VALUES (?)', [result.insertId]);
         }
 
+        const token = jwt.sign(
+            { id: result.insertId, role: role || 'customer' },
+            process.env.JWT_SECRET,
+            { expiresIn: '1d' }
+        );
+
         res.status(201).json({
             status: true,
             message: "Registrasi berhasil",
-            userId: result.insertId
+            token, 
+            user: {
+                id: result.insertId,
+                name: name,
+                role: role || 'customer'
+            }
         });
     } catch (err) {
         res.status(500).json({ message: err.message });
