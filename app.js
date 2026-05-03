@@ -41,7 +41,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', userRoutes);
-app.use('/api/v1//orders', apiRoutes);
+app.use('/api/v1/orders', apiRoutes);
 
 // Root URL untuk pengecekan status server
 app.get('/', (req, res) => {
