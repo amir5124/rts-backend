@@ -11,6 +11,7 @@ dotenv.config();
 // Import Routes
 const authRoutes = require('./src/routes/authRoutes');
 const userRoutes = require('./src/routes/userRoutes');
+const apiRoutes = require('./src/routes/api');
 
 // Import Cron Jobs (Otomatis berjalan saat server start)
 // require('./src/jobs/escrowJob');
@@ -40,6 +41,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', userRoutes);
+app.use('/api/orders', apiRoutes);
 
 // Root URL untuk pengecekan status server
 app.get('/', (req, res) => {
