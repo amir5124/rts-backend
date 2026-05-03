@@ -90,3 +90,16 @@ exports.login = async (req, res) => {
         res.status(500).json({ message: err.message });
     }
 };
+
+exports.logout = async (req, res) => {
+    try {
+        // Karena kita pakai JWT, logout cukup dilakukan dengan menghapus token di sisi client.
+        // Tapi kita kirim response sukses agar aplikasi mobile tahu proses selesai.
+        res.status(200).json({
+            status: true,
+            message: "Logout berhasil (Silakan hapus token di storage client)"
+        });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+};
