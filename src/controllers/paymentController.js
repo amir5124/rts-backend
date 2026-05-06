@@ -3,7 +3,6 @@ const crypto = require('crypto');
 const moment = require('moment-timezone');
 const db = require('../config/db');
 
-// Gunakan config testing sesuai permintaan Anda
 const config = {
     clientId: "testing",
     clientSecret: "123",
@@ -22,49 +21,58 @@ function generateSignature(path, method, data) {
 }
 
 const PaymentController = {
-    // Fungsi Internal untuk dipanggil oleh OrderController
-    requestPaymentGateway: async (payload) => {
+    // Tambahkan parameter tx untuk menerima koneksi transaksi
+    requestPaymentGateway: async (payload, tx = null) => {
         const { order_id, order_code, amount, customer, method, bank_code } = payload;
-        
-        const partner_reff = `PAY-ORD-${order_code}`;
-        const expired = moment.tz('Asia/Jakarta').add(2, 'hours').format('YYYYMMDDHHmmss');
-        const url_callback = "https://api.siappgo.id/api/payments/callback"; // Sesuaikan domain
+        const client = tx || db; // Jika ada tx gunakan tx, jika tidak gunakan pool default
 
-        const commonData = {
-            amount: Math.round(amount),
-            expired,
-            partner_reff,
-            customer_id: customer.phone,
-            customer_name: customer.name.substring(0, 30),
-            customer_email: customer.email
-        };
+        try {
+            const partner_reff = `PAY-ORD-${order_code}`;
+            const expired = moment.tz('Asia/Jakarta').add(2, 'hours').format('YYYYMMDDHHmmss');
+            const url_callback = "https://api.siappgo.id/api/payments/callback";
 
-        let endpoint = method === 'VA' ? '/transaction/create/va' : '/transaction/create/qris';
-        let payloadLinkQu = { ...commonData, username: config.username, pin: config.pin, url_callback };
+            const commonData = {
+                amount: Math.round(amount),
+                expired,
+                partner_reff,
+                customer_id: customer.phone,
+                customer_name: customer.name.substring(0, 30),
+                customer_email: customer.email
+            };
 
-        if (method === 'VA') {
-            payloadLinkQu.bank_code = bank_code;
-            payloadLinkQu.signature = generateSignature(endpoint, 'POST', { ...commonData, bank_code });
-        } else {
-            payloadLinkQu.signature = generateSignature(endpoint, 'POST', commonData);
+            let endpoint = method === 'VA' ? '/transaction/create/va' : '/transaction/create/qris';
+            let payloadLinkQu = { ...commonData, username: config.username, pin: config.pin, url_callback };
+
+            if (method === 'VA') {
+                payloadLinkQu.bank_code = bank_code;
+                payloadLinkQu.signature = generateSignature(endpoint, 'POST', { ...commonData, bank_code });
+            } else {
+                payloadLinkQu.signature = generateSignature(endpoint, 'POST', commonData);
+            }
+
+            console.log(`[LinkQu] 🚀 Mengirim Request ke ${endpoint}...`);
+            const resp = await axios.post(`${config.baseUrl}${endpoint}`, payloadLinkQu, {
+                headers: { 'client-id': config.clientId, 'client-secret': config.clientSecret }
+            });
+
+            console.log(`[LinkQu] ✅ Response diterima:`, resp.data.status_msg || "SUCCESS");
+
+            const linkquData = resp.data;
+            const vaNumber = linkquData.virtual_account || linkquData.va_number || (linkquData.data?.va_number);
+            const qrisUrl = linkquData.imageqris || linkquData.qr_url || (linkquData.data?.qr_url);
+
+            // Simpan ke tabel payments menggunakan client (tx) yang sama
+            await client.query(
+                `INSERT INTO payments (order_id, partner_reff, method, bank_code, va_number, qris_url, amount, status, expired_at) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
+                [order_id, partner_reff, method, bank_code, vaNumber, qrisUrl, amount, moment(expired, 'YYYYMMDDHHmmss').format('YYYY-MM-DD HH:mm:ss')]
+            );
+
+            return { vaNumber, qrisUrl, partner_reff };
+        } catch (error) {
+            console.error(`[LinkQu Error] ❌ Detail:`, error.response?.data || error.message);
+            throw new Error(`Gagal memproses pembayaran: ${error.response?.data?.status_msg || error.message}`);
         }
-
-        const resp = await axios.post(`${config.baseUrl}${endpoint}`, payloadLinkQu, {
-            headers: { 'client-id': config.clientId, 'client-secret': config.clientSecret }
-        });
-
-        const linkquData = resp.data;
-        const vaNumber = linkquData.virtual_account || linkquData.va_number || (linkquData.data?.va_number);
-        const qrisUrl = linkquData.imageqris || linkquData.qr_url || (linkquData.data?.qr_url);
-
-        // Simpan ke tabel payments
-        await db.query(
-            `INSERT INTO payments (order_id, partner_reff, method, bank_code, va_number, qris_url, amount, status, expired_at) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
-            [order_id, partner_reff, method, bank_code, vaNumber, qrisUrl, amount, moment(expired, 'YYYYMMDDHHmmss').format('YYYY-MM-DD HH:mm:ss')]
-        );
-
-        return { vaNumber, qrisUrl, partner_reff };
     },
 
     handleCallback: async (req, res) => {

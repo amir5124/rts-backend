@@ -4,127 +4,95 @@ const PaymentController = require('./paymentController');
 const OrderController = {
     createOrder: async (req, res) => {
         let connection;
-        let orderCode = `ORD-${Date.now()}`; // Pindahkan ke atas agar bisa diakses di catch/log
+        const orderCode = `ORD-${Date.now()}`;
 
         try {
-            // Log Payload untuk Debugging
-            console.log("--- 📥 Payload Masuk ---");
-            console.log(JSON.stringify(req.body, null, 2));
-
+            console.log(`\n--- 🏁 MEMULAI PROSES ORDER: ${orderCode} ---`);
+            
             const { 
-                customer_id, 
-                mitra_id, 
-                service_id, 
-                location_info, 
-                latitude_dest, 
-                longitude_dest, 
-                order_info, 
-                payment_info 
+                customer_id, mitra_id, service_id, location_info, 
+                latitude_dest, longitude_dest, order_info, payment_info 
             } = req.body;
 
+            // 1. Ambil koneksi dari pool
             connection = await db.getConnection();
-            
-            // Memulai Transaksi
-            await connection.beginTransaction();
+            console.log("DB: Koneksi didapatkan.");
 
-            // 1. Simpan ke tabel orders
+            // 2. Start Transaction
+            await connection.beginTransaction();
+            console.log("DB: Transaksi dimulai.");
+
+            // 3. Simpan ke tabel orders
             const queryInsert = `
                 INSERT INTO orders (
-                    order_code, 
-                    customer_id, 
-                    mitra_id, 
-                    service_id,
-                    duration,
-                    total_amount, 
-                    transport_fee, 
-                    admin_fee, 
-                    status, 
-                    scheduled_at,
-                    latitude_dest,
-                    longitude_dest,
-                    address_google,
-                    address_detail,
-                    note,
-                    payment_method_id
-                ) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_payment', ?, ?, ?, ?, ?, ?, ?)`;
+                    order_code, customer_id, mitra_id, service_id, duration,
+                    total_amount, transport_fee, admin_fee, status, scheduled_at,
+                    latitude_dest, longitude_dest, address_google, address_detail,
+                    note, payment_method_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_payment', ?, ?, ?, ?, ?, ?, ?)`;
 
             const valuesInsert = [
-                orderCode, 
-                customer_id, 
-                mitra_id, 
-                service_id || null, 
-                order_info.durasi, 
-                order_info.total_bayar, 
-                order_info.rincian_biaya.transport, 
-                order_info.rincian_biaya.admin, 
-                order_info.scheduled_at,
-                latitude_dest, 
-                longitude_dest, 
-                location_info.address_google, 
-                location_info.address_detail, 
-                location_info.note || "", 
+                orderCode, customer_id, mitra_id, service_id || null, order_info.durasi, 
+                order_info.total_bayar, order_info.rincian_biaya.transport, order_info.rincian_biaya.admin, 
+                'pending_payment', order_info.scheduled_at, latitude_dest, longitude_dest, 
+                location_info.address_google, location_info.address_detail, location_info.note || "", 
                 payment_info.method 
             ];
 
-            console.log("--- 🚀 Menjalankan Query Insert ---");
             const [orderResult] = await connection.query(queryInsert, valuesInsert);
-
             const orderId = orderResult.insertId;
-            console.log("✅ Order Berhasil Disimpan, ID:", orderId);
+            console.log(`DB: Order disimpan (ID: ${orderId}).`);
 
-            // 2. Ambil data customer untuk keperluan Payment Gateway
-            const [customerRows] = await connection.query("SELECT name, phone, email FROM users WHERE id = ?", [customer_id]);
+            // 4. Ambil data customer (Masih pakai connection yang sama)
+            const [customerRows] = await connection.query(
+                "SELECT name, phone, email FROM users WHERE id = ? FOR UPDATE", 
+                [customer_id]
+            );
             const customer = customerRows[0];
 
-            if (!customer) {
-                throw new Error(`Customer dengan ID ${customer_id} tidak ditemukan di database.`);
-            }
+            if (!customer) throw new Error("Customer tidak ditemukan.");
 
-            // 3. Panggil Payment Controller (Orkestrasi)
-            console.log("--- 💳 Meminta Session Payment Gateway ---");
+            // 5. Panggil Payment Gateway (KIRIM KONEKSI connection/tx)
+            console.log("API: Meminta session ke LinkQu...");
             const paymentResult = await PaymentController.requestPaymentGateway({
                 order_id: orderId,
                 order_code: orderCode,
                 amount: order_info.total_bayar,
                 customer: customer,
-                method: payment_info.method_type, // 'VA' atau 'QRIS'
-                bank_code: payment_info.method    // kode bank jika VA
-            });
+                method: payment_info.method_type,
+                bank_code: payment_info.method
+            }, connection); // <--- INI KUNCINYA
 
-            // Commit Transaksi jika semua berhasil
+            // 6. Jika semua sukses, baru Commit
             await connection.commit();
-            console.log("✨ Transaksi Berhasil Diselesaikan!");
+            console.log("DB: Transaksi BERHASIL di-commit.");
 
-            res.json({
+            return res.json({
                 success: true,
                 order_code: orderCode,
                 payment_info: paymentResult
             });
 
         } catch (error) {
-            // PENTING: Rollback dilakukan SEGERA setelah error terdeteksi
+            // Rollback jika terjadi kegagalan di tahap manapun
             if (connection) {
-                console.log("--- ❌ Melakukan Rollback Transaksi ---");
+                console.error("DB: Terjadi kesalahan, melakukan Rollback...");
                 await connection.rollback();
             }
             
-            // Log Error Detail
-            console.error("--- ❌ Order Error Detail ---");
-            console.error("Order Code:", orderCode);
-            console.error("Message:", error.message);
-            if (error.code) console.error("DB Error Code:", error.code);
+            console.error(`❌ ORDER GAGAL [${orderCode}]:`, error.message);
             
-            res.status(500).json({ 
+            return res.status(500).json({ 
                 success: false, 
-                message: error.message,
-                db_error_code: error.code 
+                message: error.message 
             });
+
         } finally {
-            // PENTING: Selalu lepaskan koneksi ke pool baik sukses maupun gagal
+            // Apapun yang terjadi, lepaskan koneksi
             if (connection) {
-                console.log("--- 🔌 Melepas Koneksi Database ---");
                 connection.release();
+                console.log("DB: Koneksi dilepaskan ke pool.");
+                console.log("--- 🔚 SELESAI ---\n");
             }
         }
     }
