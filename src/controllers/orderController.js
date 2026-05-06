@@ -8,10 +8,10 @@ const OrderController = {
 
         try {
             console.log(`\n--- 🏁 MEMULAI PROSES ORDER: ${orderCode} ---`);
-            
-            const { 
-                customer_id, mitra_id, service_id, location_info, 
-                latitude_dest, longitude_dest, order_info, payment_info 
+
+            const {
+                customer_id, mitra_id, service_id, location_info,
+                latitude_dest, longitude_dest, order_info, payment_info
             } = req.body;
 
             // 1. Ambil koneksi dari pool
@@ -24,20 +24,46 @@ const OrderController = {
 
             // 3. Simpan ke tabel orders
             const queryInsert = `
-                INSERT INTO orders (
-                    order_code, customer_id, mitra_id, service_id, duration,
-                    total_amount, transport_fee, admin_fee, status, scheduled_at,
-                    latitude_dest, longitude_dest, address_google, address_detail,
-                    note, payment_method_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_payment', ?, ?, ?, ?, ?, ?, ?)`;
+    INSERT INTO orders (
+        order_code, 
+        customer_id, 
+        mitra_id, 
+        service_id, 
+        duration,
+        total_amount, 
+        transport_fee, 
+        admin_fee, 
+        status,           -- Kolom status di urutan ke-9
+        scheduled_at,     -- Kolom scheduled_at di urutan ke-10
+        latitude_dest,
+        longitude_dest,
+        address_google,
+        address_detail,
+        note,
+        payment_method_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`; // Total 16 parameter
 
             const valuesInsert = [
-                orderCode, customer_id, mitra_id, service_id || null, order_info.durasi, 
-                order_info.total_bayar, order_info.rincian_biaya.transport, order_info.rincian_biaya.admin, 
-                'pending_payment', order_info.scheduled_at, latitude_dest, longitude_dest, 
-                location_info.address_google, location_info.address_detail, location_info.note || "", 
-                payment_info.method 
+                orderCode,                      // order_code
+                customer_id,                    // customer_id
+                mitra_id,                       // mitra_id
+                service_id || null,             // service_id
+                order_info.durasi,              // duration
+                order_info.total_bayar,         // total_amount
+                order_info.rincian_biaya.transport, // transport_fee
+                order_info.rincian_biaya.admin,     // admin_fee
+                'pending_payment',              // status (PAS dengan kolom ke-9)
+                order_info.scheduled_at,        // scheduled_at (PAS dengan kolom ke-10)
+                latitude_dest,                  // latitude_dest
+                longitude_dest,                 // longitude_dest
+                location_info.address_google,   // address_google
+                location_info.address_detail,   // address_detail
+                location_info.note || "",       // note
+                payment_info.method             // payment_method_id
             ];
+
+            console.log("--- 🚀 Menjalankan Query Insert ---");
+
 
             const [orderResult] = await connection.query(queryInsert, valuesInsert);
             const orderId = orderResult.insertId;
@@ -45,7 +71,7 @@ const OrderController = {
 
             // 4. Ambil data customer (Masih pakai connection yang sama)
             const [customerRows] = await connection.query(
-                "SELECT name, phone, email FROM users WHERE id = ? FOR UPDATE", 
+                "SELECT name, phone, email FROM users WHERE id = ? FOR UPDATE",
                 [customer_id]
             );
             const customer = customerRows[0];
@@ -79,12 +105,12 @@ const OrderController = {
                 console.error("DB: Terjadi kesalahan, melakukan Rollback...");
                 await connection.rollback();
             }
-            
+
             console.error(`❌ ORDER GAGAL [${orderCode}]:`, error.message);
-            
-            return res.status(500).json({ 
-                success: false, 
-                message: error.message 
+
+            return res.status(500).json({
+                success: false,
+                message: error.message
             });
 
         } finally {
