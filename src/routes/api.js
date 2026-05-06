@@ -7,6 +7,6 @@ const PaymentController = require('../controllers/paymentController');
 router.post('/', OrderController.createOrder);
 
 // Endpoint Callback untuk LinkQu (Daftarkan URL ini di Dashboard LinkQu)
-router.post('/payments/callback', PaymentController.handleCallback);
+// router.post('/payments/callback', PaymentController.handleCallback);
 
 module.exports = router;
