@@ -1,17 +1,20 @@
 const axios = require('axios');
 const crypto = require('crypto');
 
+// Gunakan environment variables atau config object
 const config = {
-    clientId: "5f5aa496-7e16-4ca1-9967-33c768dac6c7",
-    clientSecret: "TM1rVhfaFm5YJxKruHo0nWMWC",
-    username: "LI9019VKS",
-    pin: "5m6uYAScSxQtCmU",
-    serverKey: "QtwGEr997XDcmMb1Pq8S5X1N",
-    baseUrl: 'https://api.linkqu.id/linkqu-partner'
+    clientId: "testing",
+    clientSecret: "123",
+    username: "LI307GXIN",
+    pin: "2K2NPCBBNNTovgB",
+    serverKey: "LinkQu@2020",
+    baseUrl: 'https://gateway-dev.linkqu.id/linkqu-partner'
 };
-
+/**
+ * Fungsi internal untuk memukul API LinkQu dengan Signature HmacSha256
+ */
 const hitLinkQu = async (endpoint, data, rawSig) => {
-    // Logic Signature sesuai revisi kamu: endpoint + POST + clean alphanumeric rawSig
+    // Generate Signature: endpoint + POST + rawSig (clean alphanumeric lowercase)
     const signature = crypto.createHmac("sha256", config.serverKey)
         .update(endpoint + 'POST' + rawSig.replace(/[^0-9a-zA-Z]/g, "").toLowerCase())
         .digest("hex");
@@ -31,47 +34,86 @@ const hitLinkQu = async (endpoint, data, rawSig) => {
 };
 
 module.exports = {
+    /**
+     * Membuat Virtual Account
+     */
     createVA: async (d) => {
-        // Mapping Bank Code (Sesuaikan jika bank_code sudah berupa angka dari payload)
-        const bankMapping = { 'VA BRI': '002', 'VA MANDIRI': '008', 'VA BNI': '009', 'VA PERMATA': '013', 'VA BCA': '014' };
-        const selectedBank = bankMapping[d.method.toUpperCase()] || d.bank_code;
+        const bankMapping = {
+            'VA BRI': '002',
+            'BRI': '002',
+            'VA MANDIRI': '008',
+            'MANDIRI': '008',
+            'VA BNI': '009',
+            'BNI': '009',
+            'VA PERMATA': '013',
+            'PERMATA': '013',
+            'VA BCA': '014',
+            'BCA': '014'
+        };
+
+        const selectedBankCode = bankMapping[d.method?.toUpperCase()] || d.bank_code;
 
         const payload = {
             amount: d.amount,
-            expired: d.expired,
-            bank_code: selectedBank,
             partner_reff: d.partner_reff,
-            customer_id: String(d.customer_id),
+            customer_id: String(d.customer_id || "CUST-001"),
             customer_name: d.customer_name.trim(),
+            expired: d.expired,
+            customer_phone: d.customer_phone || "081234567890",
             customer_email: d.customer_email,
-            customer_phone: d.customer_phone,
-            remark: "Pembayaran " + d.partner_reff,
-            url_callback: d.url_callback
+            bank_code: selectedBankCode,
+            remark: "Pembayaran Order " + d.partner_reff,
+            url_callback: d.url_callback || "https://api.siappgo.id/api/payments/callback"
         };
 
-        // Urutan VA: amount + expired + bank_code + partner_reff + nama + nama + email + client_id
+        // Urutan rawSig VA sesuai dokumentasi: amount + expired + bank_code + partner_reff + nama + nama + email + client_id
         const rawSig = payload.amount + payload.expired + payload.bank_code + payload.partner_reff + 
                        payload.customer_name + payload.customer_name + payload.customer_email + config.clientId;
 
         return await hitLinkQu('/transaction/create/va', payload, rawSig);
     },
 
+    /**
+     * Membuat QRIS
+     */
     createQRIS: async (d) => {
         const payload = {
             amount: d.amount,
-            expired: d.expired,
             partner_reff: d.partner_reff,
-            customer_id: String(d.customer_id),
+            customer_id: String(d.customer_id || "CUST-001"),
             customer_name: d.customer_name.trim(),
+            customer_phone: d.customer_phone || "081234567890",
             customer_email: d.customer_email,
-            customer_phone: d.customer_phone,
-            url_callback: d.url_callback
+            expired: d.expired,
+            url_callback: d.url_callback || "https://api.siappgo.id/api/payments/callback"
         };
 
-        // Urutan QRIS: amount + expired + partner_reff + nama + nama + email + client_id
+        // Urutan rawSig QRIS: amount + expired + partner_reff + nama + nama + email + client_id
         const rawSig = payload.amount + payload.expired + payload.partner_reff + 
                        payload.customer_name + payload.customer_name + payload.customer_email + config.clientId;
 
         return await hitLinkQu('/transaction/create/qris', payload, rawSig);
+    },
+
+    /**
+     * Cek Status (Polling)
+     */
+    checkStatus: async (partnerReff) => {
+        try {
+            const response = await axios.get(`${config.baseUrl}/transaction/payment/checkstatus`, {
+                params: {
+                    username: config.username,
+                    partnerreff: partnerReff
+                },
+                headers: {
+                    'client-id': config.clientId,
+                    'client-secret': config.clientSecret
+                }
+            });
+            return response.data;
+        } catch (error) {
+            console.error("LinkQu Check Status Error:", error.response?.data || error.message);
+            throw error;
+        }
     }
 };
