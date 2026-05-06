@@ -4,12 +4,12 @@ const fs = require('fs');
 const path = require('path');
 
 const config = {
-    username: process.env.LINKQU_USERNAME || "LI9019VKS",
-    pin: process.env.LINKQU_PIN || "5m6uYAScSxQtCmU",
-    clientId: process.env.LINKQU_CLIENT_ID || "5f5aa496-7e16-4ca1-9967-33c768dac6c7",
-    clientSecret: process.env.LINKQU_CLIENT_SECRET || "TM1rVhfaFm5YJxKruHo0nWMWC",
-    serverKey: process.env.LINKQU_SERVER_KEY || "QtwGEr997XDcmMb1Pq8S5X1N",
-    baseUrl: process.env.LINKQU_BASE_URL || "https://api.linkqu.id/linkqu-partner",
+    clientId: "testing",
+    clientSecret: "123",
+    username: "LI307GXIN",
+    pin: "2K2NPCBBNNTovgB",
+    serverKey: "LinkQu@2020",
+    baseUrl: 'https://gateway-dev.linkqu.id/linkqu-partner'
 };
 
 /**
