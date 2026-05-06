@@ -55,7 +55,7 @@ const PaymentController = {
                 headers: { 'client-id': config.clientId, 'client-secret': config.clientSecret }
             });
 
-            console.log(`[LinkQu] ✅ Response diterima:`, resp.data.status_msg || "SUCCESS");
+            console.log(`[LinkQu] ✅ Response diterima:`, resp.data || "SUCCESS");
 
             const linkquData = resp.data;
             const vaNumber = linkquData.virtual_account || linkquData.va_number || (linkquData.data?.va_number);
