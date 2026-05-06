@@ -4,6 +4,8 @@ const PaymentController = require('./paymentController');
 const OrderController = {
     createOrder: async (req, res) => {
         let connection;
+        let orderCode = `ORD-${Date.now()}`; // Pindahkan ke atas agar bisa diakses di catch/log
+
         try {
             // Log Payload untuk Debugging
             console.log("--- 📥 Payload Masuk ---");
@@ -12,20 +14,20 @@ const OrderController = {
             const { 
                 customer_id, 
                 mitra_id, 
-                service_id, // Ambil service_id
-                location_info, // Ambil info lokasi
-                latitude_dest, // Ambil latitude
-                longitude_dest, // Ambil longitude
+                service_id, 
+                location_info, 
+                latitude_dest, 
+                longitude_dest, 
                 order_info, 
                 payment_info 
             } = req.body;
 
             connection = await db.getConnection();
+            
+            // Memulai Transaksi
             await connection.beginTransaction();
 
-            const orderCode = `ORD-${Date.now()}`;
-            
-            // 1. Simpan ke tabel orders (Menambahkan kolom yang kurang)
+            // 1. Simpan ke tabel orders
             const queryInsert = `
                 INSERT INTO orders (
                     order_code, 
@@ -51,18 +53,18 @@ const OrderController = {
                 orderCode, 
                 customer_id, 
                 mitra_id, 
-                service_id || null,             // Dari payload
-                order_info.durasi,              // Dari payload
+                service_id || null, 
+                order_info.durasi, 
                 order_info.total_bayar, 
                 order_info.rincian_biaya.transport, 
                 order_info.rincian_biaya.admin, 
                 order_info.scheduled_at,
-                latitude_dest,                  // Dari payload
-                longitude_dest,                 // Dari payload
-                location_info.address_google,   // Dari payload
-                location_info.address_detail,   // Dari payload
-                location_info.note || "",       // Dari payload
-                payment_info.method             // Simpan kode bank/metode ke DB
+                latitude_dest, 
+                longitude_dest, 
+                location_info.address_google, 
+                location_info.address_detail, 
+                location_info.note || "", 
+                payment_info.method 
             ];
 
             console.log("--- 🚀 Menjalankan Query Insert ---");
@@ -90,6 +92,7 @@ const OrderController = {
                 bank_code: payment_info.method    // kode bank jika VA
             });
 
+            // Commit Transaksi jika semua berhasil
             await connection.commit();
             console.log("✨ Transaksi Berhasil Diselesaikan!");
 
@@ -100,20 +103,29 @@ const OrderController = {
             });
 
         } catch (error) {
-            if (connection) await connection.rollback();
+            // PENTING: Rollback dilakukan SEGERA setelah error terdeteksi
+            if (connection) {
+                console.log("--- ❌ Melakukan Rollback Transaksi ---");
+                await connection.rollback();
+            }
             
             // Log Error Detail
             console.error("--- ❌ Order Error Detail ---");
+            console.error("Order Code:", orderCode);
             console.error("Message:", error.message);
             if (error.code) console.error("DB Error Code:", error.code);
             
             res.status(500).json({ 
                 success: false, 
                 message: error.message,
-                db_error_code: error.code // Kirim kode error DB ke frontend untuk debug
+                db_error_code: error.code 
             });
         } finally {
-            if (connection) connection.release();
+            // PENTING: Selalu lepaskan koneksi ke pool baik sukses maupun gagal
+            if (connection) {
+                console.log("--- 🔌 Melepas Koneksi Database ---");
+                connection.release();
+            }
         }
     }
 };
