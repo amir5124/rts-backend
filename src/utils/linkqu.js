@@ -8,7 +8,7 @@ const config = {
     clientSecret: "123",
     username: "LI307GXIN",
     pin: "2K2NPCBBNNTovgB",
-    serverKey: "LinkQu@2020",
+    serverKey: "LinkQu@2020",      // ← Digunakan sebagai HMAC key (bukan clientSecret)
     baseUrl: 'https://gateway-dev.linkqu.id/linkqu-partner'
 };
 
@@ -19,11 +19,11 @@ const logToFile = (title, message) => {
     try {
         const logDir = path.join(__dirname, '../logs');
         if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-        
+
         const logPath = path.join(logDir, 'linkqu.log');
         const timestamp = new Date().toLocaleString('id-ID');
         const logMessage = `[${timestamp}] === ${title} ===\n${typeof message === 'object' ? JSON.stringify(message, null, 2) : message}\n------------------------------------------\n`;
-        
+
         fs.appendFileSync(logPath, logMessage);
     } catch (err) {
         console.error("❌ Log Error:", err);
@@ -31,35 +31,34 @@ const logToFile = (title, message) => {
 };
 
 /**
- * Pembuatan Signature sesuai kode referensi (HMAC SHA256 dari JSON Body)
+ * Signature Generator — sama persis dengan HotelPaymentController
+ *
+ * Algoritma:
+ * 1. Ambil semua VALUES dari objek data (urutan field penting!)
+ * 2. Gabungkan semua value menjadi satu string, lalu tambahkan clientId di akhir
+ * 3. Bersihkan: hapus semua karakter non-alphanumeric, ubah jadi lowercase
+ * 4. HMAC-SHA256 dengan key = serverKey, input = endpoint + method + cleaned
  */
-const generateSignature = (data) => {
-    const payload = JSON.stringify(data);
+const generateSignature = (endpoint, method, data) => {
+    // Gabungkan semua value + clientId
+    const rawValue = Object.values(data).join('') + config.clientId;
+
+    // Bersihkan: hanya huruf dan angka, semua lowercase
+    const cleaned = rawValue.replace(/[^0-9a-zA-Z]/g, '').toLowerCase();
+
     return crypto
-        .createHmac('sha256', config.clientSecret)
-        .update(payload)
+        .createHmac('sha256', config.serverKey)
+        .update(endpoint + method + cleaned)
         .digest('hex');
 };
 
 const LinkQuUtility = {
+
     hitLinkQu: async (endpoint, payload) => {
         try {
-            // Tambahkan username & pin ke payload utama sebelum di-hash
-            const fullBody = {
-                ...payload,
-                username: config.username,
-                pin: config.pin
-            };
+            logToFile(`REQUEST ${endpoint}`, payload);
 
-            // Generate signature dari body JSON utuh
-            const signature = generateSignature(fullBody);
-            
-            // Sertakan signature ke dalam body
-            const finalBody = { ...fullBody, signature };
-
-            logToFile(`REQUEST ${endpoint}`, finalBody);
-
-            const response = await axios.post(`${config.baseUrl}${endpoint}`, finalBody, {
+            const response = await axios.post(`${config.baseUrl}${endpoint}`, payload, {
                 headers: {
                     'client-id': config.clientId,
                     'client-secret': config.clientSecret,
@@ -70,6 +69,7 @@ const LinkQuUtility = {
 
             logToFile(`RESPONSE ${endpoint}`, response.data);
             return response.data;
+
         } catch (error) {
             const errorData = error.response?.data || error.message;
             logToFile(`ERROR ${endpoint}`, errorData);
@@ -78,6 +78,10 @@ const LinkQuUtility = {
         }
     },
 
+    /**
+     * Buat Virtual Account
+     * Urutan field untuk signature HARUS sama persis seperti di sini
+     */
     createVA: async (d) => {
         const bankMapping = {
             'VA BRI': '002', 'BRI': '002', 'VA_BRI': '002',
@@ -87,35 +91,99 @@ const LinkQuUtility = {
             'VA BCA': '014', 'BCA': '014'
         };
 
-        const payload = {
-            amount: String(d.amount),
-            expired: String(d.expired),
-            bank_code: String(bankMapping[d.method?.toUpperCase()] || d.bank_code || '002'),
-            partner_reff: String(d.partner_reff),
-            customer_id: String(d.customer_id || "CUST-001"),
-            customer_name: String(d.customer_name || "Customer").trim(),
-            customer_email: String(d.customer_email || "guest@mail.com").trim(),
-            customer_phone: String(d.customer_phone || "081234567890").replace(/[^0-9]/g, ""),
-            remark: "Payment " + d.partner_reff,
-            url_callback: d.url_callback || "https://api.siappgo.id/api/payments/callback"
+        const endpoint = '/transaction/create/va';
+        const method = 'POST';
+
+        const amount = String(Math.round(Number(d.amount)));
+        const expired = String(d.expired);
+        const bank_code = String(bankMapping[d.method?.toUpperCase()] || d.bank_code || '002');
+        const partner_reff = String(d.partner_reff);
+        const customer_id = String(d.customer_id || 'CUST-001');
+        const customer_name = String(d.customer_name || 'Customer').substring(0, 30).trim();
+        const customer_email = String(d.customer_email || 'guest@mail.com').trim();
+
+        // Format phone: hanya angka, prefiks 62
+        let customer_phone = String(d.customer_phone || '081234567890').replace(/[^0-9]/g, '');
+        if (customer_phone.startsWith('0')) customer_phone = '62' + customer_phone.substring(1);
+        else if (customer_phone.startsWith('8')) customer_phone = '62' + customer_phone;
+        if (customer_phone.length < 10) customer_phone = '628123456789';
+
+        // Data untuk signature — urutan field PENTING
+        const signatureData = {
+            amount,
+            expired,
+            bank_code,
+            partner_reff,
+            customer_id,
+            customer_name,
+            customer_email
         };
 
-        return await LinkQuUtility.hitLinkQu('/transaction/create/va', payload);
+        const signature = generateSignature(endpoint, method, signatureData);
+
+        const finalBody = {
+            ...signatureData,
+            customer_phone,
+            remark: 'Payment ' + partner_reff,
+            url_callback: d.url_callback || 'https://api.siappgo.id/api/payments/callback',
+            username: config.username,
+            pin: config.pin,
+            signature
+        };
+
+        console.log(`[LinkQu] 🚀 createVA → ${endpoint}`);
+        console.log(`[LinkQu] 📦 Signature Input Data:`, signatureData);
+        console.log(`[LinkQu] 🔑 Signature:`, signature);
+
+        return await LinkQuUtility.hitLinkQu(endpoint, finalBody);
     },
 
+    /**
+     * Buat QRIS
+     * Urutan field untuk signature HARUS sama persis seperti di sini
+     */
     createQRIS: async (d) => {
-        const payload = {
-            amount: String(d.amount),
-            expired: String(d.expired),
-            partner_reff: String(d.partner_reff),
-            customer_id: String(d.customer_id || "CUST-001"),
-            customer_name: String(d.customer_name || "Customer").trim(),
-            customer_phone: String(d.customer_phone || "081234567890").replace(/[^0-9]/g, ""),
-            customer_email: String(d.customer_email || "guest@mail.com").trim(),
-            url_callback: d.url_callback || "https://api.siappgo.id/api/payments/callback"
+        const endpoint = '/transaction/create/qris';
+        const method = 'POST';
+
+        const amount = String(Math.round(Number(d.amount)));
+        const expired = String(d.expired);
+        const partner_reff = String(d.partner_reff);
+        const customer_id = String(d.customer_id || 'CUST-001');
+        const customer_name = String(d.customer_name || 'Customer').substring(0, 30).trim();
+        const customer_email = String(d.customer_email || 'guest@mail.com').trim();
+
+        let customer_phone = String(d.customer_phone || '081234567890').replace(/[^0-9]/g, '');
+        if (customer_phone.startsWith('0')) customer_phone = '62' + customer_phone.substring(1);
+        else if (customer_phone.startsWith('8')) customer_phone = '62' + customer_phone;
+        if (customer_phone.length < 10) customer_phone = '628123456789';
+
+        // Data untuk signature — urutan field PENTING
+        const signatureData = {
+            amount,
+            expired,
+            partner_reff,
+            customer_id,
+            customer_name,
+            customer_email
         };
 
-        return await LinkQuUtility.hitLinkQu('/transaction/create/qris', payload);
+        const signature = generateSignature(endpoint, method, signatureData);
+
+        const finalBody = {
+            ...signatureData,
+            customer_phone,
+            url_callback: d.url_callback || 'https://api.siappgo.id/api/payments/callback',
+            username: config.username,
+            pin: config.pin,
+            signature
+        };
+
+        console.log(`[LinkQu] 🚀 createQRIS → ${endpoint}`);
+        console.log(`[LinkQu] 📦 Signature Input Data:`, signatureData);
+        console.log(`[LinkQu] 🔑 Signature:`, signature);
+
+        return await LinkQuUtility.hitLinkQu(endpoint, finalBody);
     }
 };
 
