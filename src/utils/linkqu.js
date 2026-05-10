@@ -83,12 +83,28 @@ const LinkQuUtility = {
      * Urutan field untuk signature HARUS sama persis seperti di sini
      */
     createVA: async (d) => {
+        // Mapping semua variasi key: uppercase, lowercase, dengan spasi/underscore/dash
         const bankMapping = {
-            'VA BRI': '002', 'BRI': '002', 'VA_BRI': '002',
-            'VA MANDIRI': '008', 'MANDIRI': '008',
-            'VA BNI': '009', 'BNI': '009',
-            'VA PERMATA': '013', 'PERMATA': '013',
-            'VA BCA': '014', 'BCA': '014'
+            // BRI
+            'VA BRI': '002', 'VA_BRI': '002', 'VA-BRI': '002',
+            'va bri': '002', 'va_bri': '002', 'va-bri': '002',
+            'BRI': '002', 'bri': '002',
+            // MANDIRI
+            'VA MANDIRI': '008', 'VA_MANDIRI': '008', 'VA-MANDIRI': '008',
+            'va mandiri': '008', 'va_mandiri': '008', 'va-mandiri': '008',
+            'MANDIRI': '008', 'mandiri': '008',
+            // BNI
+            'VA BNI': '009', 'VA_BNI': '009', 'VA-BNI': '009',
+            'va bni': '009', 'va_bni': '009', 'va-bni': '009',
+            'BNI': '009', 'bni': '009',
+            // PERMATA
+            'VA PERMATA': '013', 'VA_PERMATA': '013', 'VA-PERMATA': '013',
+            'va permata': '013', 'va_permata': '013', 'va-permata': '013',
+            'PERMATA': '013', 'permata': '013',
+            // BCA
+            'VA BCA': '014', 'VA_BCA': '014', 'VA-BCA': '014',
+            'va bca': '014', 'va_bca': '014', 'va-bca': '014',
+            'BCA': '014', 'bca': '014',
         };
 
         const endpoint = '/transaction/create/va';
@@ -96,7 +112,12 @@ const LinkQuUtility = {
 
         const amount = String(Math.round(Number(d.amount)));
         const expired = String(d.expired);
-        const bank_code = String(bankMapping[d.method?.toUpperCase()] || d.bank_code || '002');
+
+        // Cari bank_code dari method (id frontend) atau bank_code langsung
+        const methodKey = d.method || d.bank_code || '';
+        const bank_code = String(bankMapping[methodKey] || bankMapping[methodKey?.toLowerCase()] || d.bank_code || '002');
+
+        console.log(`[LinkQu] 🏦 method="${methodKey}" → bank_code="${bank_code}"`);
         const partner_reff = String(d.partner_reff);
         const customer_id = String(d.customer_id || 'CUST-001');
         const customer_name = String(d.customer_name || 'Customer').substring(0, 30).trim();
