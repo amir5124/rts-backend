@@ -72,7 +72,7 @@ const LinkQu = {
         const payload = {
             amount: String(d.amount),
             expired: d.expired,
-            bank_code: bank_code,
+            bank_code: '009',
             partner_reff: d.partner_reff,
             customer_id: d.customer_id,
             customer_name: d.customer_name,
