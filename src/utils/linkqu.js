@@ -1,17 +1,29 @@
 const axios = require('axios');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
-// Konfigurasi LinkQu (Disarankan menggunakan process.env)
 const config = {
-    clientId: process.env.LINKQU_CLIENT_ID || "testing",
-    clientSecret: process.env.LINKQU_CLIENT_SECRET || "123",
-    username: process.env.LINKQU_USERNAME || "LI307GXIN",
-    pin: process.env.LINKQU_PIN || "2K2NPCBBNNTovgB",
+    clientId: "testing", // Ganti dengan process.env.LINKQU_CLIENT_ID
+    clientSecret: "123", // Ganti dengan process.env.LINKQU_CLIENT_SECRET
+    username: "LI307GXIN",
+    pin: "2K2NPCBBNNTovgB",
     baseUrl: 'https://gateway-dev.linkqu.id/linkqu-partner'
 };
 
+const logToFile = (title, message) => {
+    try {
+        const logDir = path.join(__dirname, '../logs');
+        if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+        const logPath = path.join(logDir, 'linkqu.log');
+        const timestamp = new Date().toLocaleString('id-ID');
+        const logMessage = `[${timestamp}] === ${title} ===\n${JSON.stringify(message, null, 2)}\n------------------------------------------\n`;
+        fs.appendFileSync(logPath, logMessage);
+    } catch (err) { console.error("❌ Log Error:", err); }
+};
+
 /**
- * Generate Signature LinkQu berdasarkan JSON payload
+ * Signature berdasarkan JSON string sesuai referensi terbaru Anda
  */
 const generateSignature = (data) => {
     const payload = JSON.stringify(data);
@@ -22,9 +34,6 @@ const generateSignature = (data) => {
 };
 
 const LinkQu = {
-    /**
-     * Fungsi Inti untuk Hit ke API LinkQu dengan Logging Detail
-     */
     hitAPI: async (endpoint, data) => {
         const signature = generateSignature(data);
         const fullPayload = {
@@ -34,10 +43,8 @@ const LinkQu = {
             signature
         };
 
-        console.log(`[LinkQu-Request] 📤 POST ${endpoint}`);
-        // console.log("Payload:", JSON.stringify(fullPayload, null, 2)); // Debugging internal
-
         try {
+            logToFile(`REQUEST ${endpoint}`, fullPayload);
             const response = await axios.post(`${config.baseUrl}${endpoint}`, fullPayload, {
                 headers: {
                     'client-id': config.clientId,
@@ -46,63 +53,37 @@ const LinkQu = {
                 },
                 timeout: 30000
             });
-
-            console.log(`[LinkQu-Response] 📥 SUCCESS - Code: ${response.data.response_code || response.data.status}`);
+            logToFile(`RESPONSE ${endpoint}`, response.data);
             return response.data;
         } catch (error) {
-            const errorData = error.response?.data || error.message;
-            console.error(`[LinkQu-Error] ❌ FAIL ${endpoint}:`, JSON.stringify(errorData));
-            return errorData;
+            const errData = error.response?.data || error.message;
+            logToFile(`ERROR ${endpoint}`, errData);
+            return errData;
         }
     },
 
-    /**
-     * Membuat Transaksi Virtual Account
-     */
     createVA: async (d) => {
-        // 1. DAFTAR MAPPING BANK
-        const bankMap = {
-            'BNI': '009',
-            'BRI': '002',
-            'MANDIRI': '008',
-            'BCA': '014',
-            'PERMATA': '013',
-            'VA_BNI': '009',
-            'VA_BRI': '002',
-            'VA_MANDIRI': '008',
-            'VA_BCA': '014',
-            'VA_PERMATA': '013'
-        };
+        // Mapping Bank Code untuk VA
+        const bankMap = { 'va_bni': '009', 'va_bri': '002', 'va_bca': '014', 'va_mandiri': '008', 'va_permata': '013' };
+        const bank_code = bankMap[d.method?.toLowerCase()] || d.bank_code;
 
-        // 2. Logika Fallback Kode Bank
-        const finalBankCode = d.bank_code || bankMap[d.method?.toUpperCase()];
+        if (!bank_code) throw new Error(`Bank Code not found for method: ${d.method}`);
 
-        if (!finalBankCode) {
-            console.error(`[LinkQu-Util] ⚠️ Mapping Gagal. Method: ${d.method}, BankCode: ${d.bank_code}`);
-            throw new Error(`Bank Code not found for method: ${d.method}`);
-        }
-
-        // 3. Susun Payload Sesuai Dokumentasi LinkQu
         const payload = {
             amount: String(d.amount),
             expired: d.expired,
-            bank_code: finalBankCode,
+            bank_code: bank_code,
             partner_reff: d.partner_reff,
             customer_id: d.customer_id,
             customer_name: d.customer_name,
             customer_email: d.customer_email,
             customer_phone: d.customer_phone,
-            remark: d.remark || "Pembayaran VA",
+            remark: d.remark || "Payment VA",
             url_callback: d.url_callback
         };
-
-        // Menggunakan LinkQu.hitAPI (bukan this.hitAPI agar lebih aman dalam konteks async)
         return await LinkQu.hitAPI('/transaction/create/va', payload);
     },
 
-    /**
-     * Membuat Transaksi QRIS
-     */
     createQRIS: async (d) => {
         const payload = {
             amount: String(d.amount),
@@ -114,7 +95,6 @@ const LinkQu = {
             customer_phone: d.customer_phone,
             url_callback: d.url_callback
         };
-
         return await LinkQu.hitAPI('/transaction/create/qris', payload);
     }
 };
