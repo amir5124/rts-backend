@@ -4,186 +4,99 @@ const fs = require('fs');
 const path = require('path');
 
 const config = {
-    clientId: "testing",
-    clientSecret: "123",
+    clientId: "testing", // Ganti dengan process.env.LINKQU_CLIENT_ID
+    clientSecret: "123", // Ganti dengan process.env.LINKQU_CLIENT_SECRET
     username: "LI307GXIN",
     pin: "2K2NPCBBNNTovgB",
-    serverKey: "LinkQu@2020",
     baseUrl: 'https://gateway-dev.linkqu.id/linkqu-partner'
 };
 
-/**
- * Log otomatis ke file logs/linkqu.log dengan format yang lebih rapi
- */
 const logToFile = (title, message) => {
     try {
         const logDir = path.join(__dirname, '../logs');
         if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-
         const logPath = path.join(logDir, 'linkqu.log');
         const timestamp = new Date().toLocaleString('id-ID');
-        const content = typeof message === 'object' ? JSON.stringify(message, null, 2) : message;
-        const logMessage = `[${timestamp}] === ${title} ===\n${content}\n------------------------------------------\n`;
-
+        const logMessage = `[${timestamp}] === ${title} ===\n${JSON.stringify(message, null, 2)}\n------------------------------------------\n`;
         fs.appendFileSync(logPath, logMessage);
-    } catch (err) {
-        console.error("❌ Log Error:", err);
-    }
+    } catch (err) { console.error("❌ Log Error:", err); }
 };
 
 /**
- * Signature Generator
- * Mencatat 'String to Sign' ke log untuk mempermudah debugging signature.
+ * Signature berdasarkan JSON string sesuai referensi terbaru Anda
  */
-const generateSignature = (endpoint, method, data) => {
-    const rawValue = Object.values(data).join('') + config.clientId;
-    const cleaned = rawValue.replace(/[^0-9a-zA-Z]/g, '').toLowerCase();
-    const stringToSign = endpoint + method + cleaned;
-
-    const signature = crypto
-        .createHmac('sha256', config.serverKey)
-        .update(stringToSign)
+const generateSignature = (data) => {
+    const payload = JSON.stringify(data);
+    return crypto
+        .createHmac('sha256', config.clientSecret)
+        .update(payload)
         .digest('hex');
-
-    // Debugging Signature (Sangat penting saat integrasi awal)
-    logToFile(`DEBUG SIGNATURE - ${endpoint}`, {
-        input_data: data,
-        string_to_sign: stringToSign,
-        result_signature: signature
-    });
-
-    return signature;
 };
 
-const LinkQuUtility = {
+const LinkQu = {
+    hitAPI: async (endpoint, data) => {
+        const signature = generateSignature(data);
+        const fullPayload = {
+            ...data,
+            username: config.username,
+            pin: config.pin,
+            signature
+        };
 
-    hitLinkQu: async (endpoint, payload) => {
         try {
-            logToFile(`REQUEST ${endpoint}`, payload);
-
-            const response = await axios.post(`${config.baseUrl}${endpoint}`, payload, {
+            logToFile(`REQUEST ${endpoint}`, fullPayload);
+            const response = await axios.post(`${config.baseUrl}${endpoint}`, fullPayload, {
                 headers: {
                     'client-id': config.clientId,
                     'client-secret': config.clientSecret,
                     'Content-Type': 'application/json'
                 },
-                timeout: 25000 // Menambah timeout sedikit lebih lama
+                timeout: 30000
             });
-
-            logToFile(`RESPONSE SUCCESS ${endpoint}`, response.data);
+            logToFile(`RESPONSE ${endpoint}`, response.data);
             return response.data;
-
         } catch (error) {
-            const errorDetail = {
-                status: error.response?.status,
-                data: error.response?.data,
-                message: error.message
-            };
-            logToFile(`ERROR ${endpoint}`, errorDetail);
-            console.error(`[LinkQu] ❌ HTTP Error ${endpoint}:`, errorDetail);
-
-            // Kembalikan objek error agar controller bisa memberikan feedback ke frontend
-            return {
-                success: false,
-                message: error.response?.data?.message || error.message || 'LinkQu Server Error'
-            };
+            const errData = error.response?.data || error.message;
+            logToFile(`ERROR ${endpoint}`, errData);
+            return errData;
         }
     },
 
     createVA: async (d) => {
-        const bankMapping = {
-            'va_bri': '002', 'bri': '002',
-            'va_mandiri': '008', 'mandiri': '008',
-            'va_bni': '009', 'bni': '009',
-            'va_permata': '013', 'permata': '013',
-            'va_bca': '014', 'bca': '014',
+        // Mapping Bank Code untuk VA
+        const bankMap = { 'va_bni': '009', 'va_bri': '002', 'va_bca': '014', 'va_mandiri': '008', 'va_permata': '013' };
+        const bank_code = bankMap[d.method?.toLowerCase()] || d.bank_code;
+
+        if (!bank_code) throw new Error(`Bank Code not found for method: ${d.method}`);
+
+        const payload = {
+            amount: String(d.amount),
+            expired: d.expired,
+            bank_code: bank_code,
+            partner_reff: d.partner_reff,
+            customer_id: d.customer_id,
+            customer_name: d.customer_name,
+            customer_email: d.customer_email,
+            customer_phone: d.customer_phone,
+            remark: d.remark || "Payment VA",
+            url_callback: d.url_callback
         };
-
-        const endpoint = '/transaction/create/va';
-        const method = 'POST';
-
-        // Validasi dan Normalisasi Bank Code
-        const methodKey = String(d.method || '').toLowerCase();
-        const bank_code = bankMapping[methodKey] || d.bank_code;
-
-        if (!bank_code) {
-            logToFile("VALIDATION ERROR", `Bank Not Supported: ${methodKey}`);
-            return { success: false, message: `LinkQu: Bank '${methodKey}' tidak didukung.` };
-        }
-
-        // Pastikan semua data adalah STRING sesuai spek API
-        const amount = String(Math.round(Number(d.amount)));
-        const expired = String(d.expired || 60);
-        const partner_reff = String(d.partner_reff);
-        const customer_id = String(d.customer_id);
-        const customer_name = String(d.customer_name || 'Customer').substring(0, 30).trim();
-        const customer_email = String(d.customer_email || 'customer@mail.com').trim();
-
-        let customer_phone = String(d.customer_phone || '').replace(/[^0-9]/g, '');
-        if (customer_phone.startsWith('0')) customer_phone = '62' + customer_phone.substring(1);
-        if (!customer_phone) customer_phone = '628123456789';
-
-        const signatureData = {
-            amount,
-            expired,
-            bank_code,
-            partner_reff,
-            customer_id,
-            customer_name,
-            customer_email
-        };
-
-        const signature = generateSignature(endpoint, method, signatureData);
-
-        const finalBody = {
-            ...signatureData,
-            customer_phone,
-            remark: d.remark || 'Payment ' + partner_reff,
-            url_callback: d.url_callback || 'https://api.siappgo.id/api/payments/callback',
-            username: config.username,
-            pin: config.pin,
-            signature
-        };
-
-        return await LinkQuUtility.hitLinkQu(endpoint, finalBody);
+        return await LinkQu.hitAPI('/transaction/create/va', payload);
     },
 
     createQRIS: async (d) => {
-        const endpoint = '/transaction/create/qris';
-        const method = 'POST';
-
-        const amount = String(Math.round(Number(d.amount)));
-        const expired = String(d.expired || 60);
-        const partner_reff = String(d.partner_reff);
-        const customer_id = String(d.customer_id);
-        const customer_name = String(d.customer_name || 'Customer').substring(0, 30).trim();
-        const customer_email = String(d.customer_email || 'customer@mail.com').trim();
-
-        let customer_phone = String(d.customer_phone || '').replace(/[^0-9]/g, '');
-        if (customer_phone.startsWith('0')) customer_phone = '62' + customer_phone.substring(1);
-
-        const signatureData = {
-            amount,
-            expired,
-            partner_reff,
-            customer_id,
-            customer_name,
-            customer_email
+        const payload = {
+            amount: String(d.amount),
+            expired: d.expired,
+            partner_reff: d.partner_reff,
+            customer_id: d.customer_id,
+            customer_name: d.customer_name,
+            customer_email: d.customer_email,
+            customer_phone: d.customer_phone,
+            url_callback: d.url_callback
         };
-
-        const signature = generateSignature(endpoint, method, signatureData);
-
-        const finalBody = {
-            ...signatureData,
-            customer_phone: customer_phone || '628123456789',
-            url_callback: d.url_callback || 'https://api.siappgo.id/api/payments/callback',
-            username: config.username,
-            pin: config.pin,
-            signature
-        };
-
-        return await LinkQuUtility.hitLinkQu(endpoint, finalBody);
+        return await LinkQu.hitAPI('/transaction/create/qris', payload);
     }
 };
 
-module.exports = LinkQuUtility;
+module.exports = LinkQu;
