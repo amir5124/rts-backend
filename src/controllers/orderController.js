@@ -2,6 +2,7 @@ const db = require('../config/db');
 const PaymentController = require('./paymentController');
 
 const OrderController = {
+    // 1. FUNGSI CREATE ORDER (KODE ASLI ANDA)
     createOrder: async (req, res) => {
         let connection;
         const orderCode = `ORD-${Date.now()}`;
@@ -64,7 +65,6 @@ const OrderController = {
 
             console.log("--- 🚀 Menjalankan Query Insert ---");
 
-
             const [orderResult] = await connection.query(queryInsert, valuesInsert);
             const orderId = orderResult.insertId;
             console.log(`DB: Order disimpan (ID: ${orderId}).`);
@@ -119,6 +119,84 @@ const OrderController = {
                 connection.release();
                 console.log("DB: Koneksi dilepaskan ke pool.");
                 console.log("--- 🔚 SELESAI ---\n");
+            }
+        }
+    },
+
+    // 2. FUNGSI GET ORDER BY CUSTOMER (TAMBAHAN)
+    getOrdersByCustomer: async (req, res) => {
+        let connection;
+        const { customer_id } = req.params;
+
+        try {
+            connection = await db.getConnection();
+
+            const query = `
+                SELECT 
+                    o.*,
+                    p.payment_code,
+                    p.amount as payment_amount,
+                    p.status as payment_status,
+                    p.payment_url,
+                    p.expired_at as payment_expiry,
+                    s.name as service_name
+                FROM orders o
+                LEFT JOIN payments p ON o.id = p.order_id
+                LEFT JOIN services s ON o.service_id = s.id
+                WHERE o.customer_id = ?
+                ORDER BY o.created_at DESC
+            `;
+
+            const [orders] = await connection.query(query, [customer_id]);
+
+            if (orders.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Belum ada riwayat pesanan untuk customer ini."
+                });
+            }
+
+            const formattedOrders = orders.map(order => ({
+                id: order.id,
+                order_code: order.order_code,
+                status: order.status,
+                total_amount: order.total_amount,
+                scheduled_at: order.scheduled_at,
+                service_info: {
+                    id: order.service_id,
+                    name: order.service_name
+                },
+                location: {
+                    address: order.address_google,
+                    detail: order.address_detail,
+                    latitude: order.latitude_dest,
+                    longitude: order.longitude_dest
+                },
+                payment_details: order.payment_code ? {
+                    code: order.payment_code,
+                    amount: order.payment_amount,
+                    status: order.payment_status,
+                    url: order.payment_url,
+                    expiry: order.payment_expiry
+                } : null,
+                created_at: order.created_at
+            }));
+
+            return res.json({
+                success: true,
+                count: formattedOrders.length,
+                data: formattedOrders
+            });
+
+        } catch (error) {
+            console.error(`❌ GAGAL MENGAMBIL DATA ORDER [Customer: ${customer_id}]:`, error.message);
+            return res.status(500).json({
+                success: false,
+                message: "Terjadi kesalahan pada server saat mengambil data order."
+            });
+        } finally {
+            if (connection) {
+                connection.release();
             }
         }
     }
