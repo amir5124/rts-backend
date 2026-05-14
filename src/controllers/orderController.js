@@ -129,7 +129,6 @@ const OrderController = {
         try {
             connection = await db.getConnection();
 
-            // QUERY DIPERBAIKI - Menggunakan kolom yang benar dari tabel payments
             const query = `
                 SELECT 
                     o.id,
@@ -145,7 +144,7 @@ const OrderController = {
                     o.longitude_dest,
                     o.payment_method_id,
                     o.payment_method_name,
-                    s.name as service_name,
+                    s.service_name,
                     p.external_id as payment_code,
                     p.partner_reff,
                     p.method as payment_method,
@@ -172,7 +171,6 @@ const OrderController = {
                 });
             }
 
-            // Format data sesuai kebutuhan frontend
             const formattedOrders = orders.map(order => ({
                 id: order.id,
                 order_code: order.order_code,
@@ -181,7 +179,7 @@ const OrderController = {
                 scheduled_at: order.scheduled_at,
                 service_info: {
                     id: order.service_id,
-                    name: order.service_name
+                    name: order.service_name  // Sekarang pakai service_name
                 },
                 location: {
                     address: order.address_google,
@@ -190,14 +188,14 @@ const OrderController = {
                     longitude: order.longitude_dest ? parseFloat(order.longitude_dest) : null
                 },
                 payment_details: order.payment_code ? {
-                    code: order.payment_code,          // external_id
+                    code: order.payment_code,
                     partner_reff: order.partner_reff,
                     method: order.payment_method,
                     bank_code: order.bank_code,
                     va_number: order.va_number,
                     amount: parseFloat(order.payment_amount),
                     status: order.payment_status,
-                    url: order.payment_url,             // qris_url untuk QRIS
+                    url: order.payment_url,
                     expiry: order.payment_expiry,
                     paid_at: order.paid_at
                 } : null,
@@ -224,6 +222,6 @@ const OrderController = {
             }
         }
     }
-};
+}
 
 module.exports = OrderController;
