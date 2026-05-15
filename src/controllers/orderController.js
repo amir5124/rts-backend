@@ -126,6 +126,7 @@ const OrderController = {
         let connection;
         const { customer_id } = req.params;
 
+        // Mapping bank code ke nama bank (untuk referensi, bukan untuk instruksi)
         const getBankName = (bankCode) => {
             const bankMap = {
                 '002': 'BANK BRI',
@@ -135,7 +136,7 @@ const OrderController = {
                 '022': 'BANK CIMB NIAGA',
                 'qris': 'QRIS'
             };
-            return bankMap[bankCode] || bankCode || 'Virtual Account';
+            return bankMap[bankCode] || null;
         };
 
         try {
@@ -170,16 +171,19 @@ const OrderController = {
                     md.avg_rating as mitra_rating,
                     md.certificate_url,
                     -- Informasi Payment
-                    p.external_id as payment_code,
+                    p.id as payment_id,
                     p.partner_reff,
+                    p.external_id,
                     p.method as payment_method,
                     p.bank_code,
                     p.va_number,
                     p.qris_url,
                     p.amount as payment_amount,
+                    p.fee_admin_pg,
                     p.status as payment_status,
                     p.expired_at as payment_expiry,
-                    p.paid_at
+                    p.paid_at,
+                    p.created_at as payment_created_at
                 FROM orders o
                 LEFT JOIN services s ON o.service_id = s.id
                 LEFT JOIN users u ON o.mitra_id = u.id
@@ -199,32 +203,41 @@ const OrderController = {
             }
 
             const formattedOrders = orders.map(order => {
-                // Format payment details
+                // Format payment details - DATA MENTAH SAJA
                 let paymentDetails = null;
 
-                if (order.payment_code) {
-                    const isQris = order.payment_method === 'QR' || order.bank_code === 'qris';
-
+                if (order.payment_id || order.partner_reff) {
+                    // Base payment data
                     paymentDetails = {
-                        code: order.payment_code,
+                        id: order.payment_id,
                         partner_reff: order.partner_reff,
+                        external_id: order.external_id,
                         method: order.payment_method,
-                        amount: parseFloat(order.payment_amount),
                         status: order.payment_status,
-                        expiry: order.payment_expiry,
-                        paid_at: order.paid_at
+                        amount: parseFloat(order.payment_amount) || parseFloat(order.total_amount),
+                        fee_admin: parseFloat(order.fee_admin_pg) || 0,
+                        expired_at: order.payment_expiry,
+                        paid_at: order.paid_at,
+                        created_at: order.payment_created_at
                     };
 
-                    if (!isQris && order.va_number) {
-                        paymentDetails.bank = {
-                            code: order.bank_code,
-                            name: getBankName(order.bank_code)
+                    // Data spesifik berdasarkan metode pembayaran (RAW DATA)
+                    if (order.payment_method === 'VA' && order.va_number) {
+                        paymentDetails.virtual_account = {
+                            bank_code: order.bank_code,
+                            bank_name: getBankName(order.bank_code),
+                            va_number: order.va_number
                         };
-                        paymentDetails.virtual_account = order.va_number;
                     }
-
-                    if (isQris && order.qris_url) {
-                        paymentDetails.qris_url = order.qris_url;
+                    else if (order.payment_method === 'QR' && order.qris_url) {
+                        paymentDetails.qris = {
+                            qris_url: order.qris_url
+                        };
+                    }
+                    else if (order.payment_method === 'MANUAL') {
+                        paymentDetails.manual = {
+                            instructions: null // Frontend yang tentukan
+                        };
                     }
                 }
 
@@ -235,48 +248,67 @@ const OrderController = {
                     total_amount: parseFloat(order.total_amount),
                     scheduled_at: order.scheduled_at,
                     note: order.note,
-                    service_info: {
+
+                    // Service Info
+                    service: {
                         id: order.service_id,
                         name: order.service_name,
-                        base_price: parseFloat(order.base_price)
+                        base_price: parseFloat(order.base_price) || 0
                     },
-                    mitra_info: order.mitra_id ? {
+
+                    // Mitra Info
+                    mitra: order.mitra_id ? {
                         id: order.mitra_id,
                         name: order.mitra_name,
                         phone: order.mitra_phone,
                         profile_pic: order.mitra_profile_pic,
                         rating: parseFloat(order.mitra_rating) || 0,
-                        is_verified: order.mitra_is_verified === 1,
-                        is_online: order.mitra_is_online === 1,
+                        is_verified: Boolean(order.mitra_is_verified),
+                        is_online: Boolean(order.mitra_is_online),
                         specialization: order.specialization,
                         certificate_url: order.certificate_url
                     } : null,
+
+                    // Location Info
                     location: {
                         address: order.address_google,
                         detail: order.address_detail,
                         latitude: order.latitude_dest ? parseFloat(order.latitude_dest) : null,
                         longitude: order.longitude_dest ? parseFloat(order.longitude_dest) : null
                     },
-                    confirmation: {
+
+                    // Status Confirmation
+                    confirmations: {
                         mitra_confirmed_at: order.confirmed_at_mitra,
                         customer_confirmed_at: order.confirmed_at_customer
                     },
-                    payment_details: paymentDetails,
-                    created_at: order.created_at
+
+                    // Payment Info (RAW DATA)
+                    payment: paymentDetails,
+
+                    // Metadata
+                    created_at: order.created_at,
+                    updated_at: order.updated_at
                 };
             });
 
             return res.json({
                 success: true,
-                count: formattedOrders.length,
-                data: formattedOrders
+                code: 200,
+                message: "Riwayat pesanan berhasil ditemukan",
+                data: {
+                    total: formattedOrders.length,
+                    orders: formattedOrders
+                }
             });
 
         } catch (error) {
             console.error(`❌ GAGAL MENGAMBIL DATA ORDER [Customer: ${customer_id}]:`, error.message);
             return res.status(500).json({
                 success: false,
-                message: "Terjadi kesalahan pada server saat mengambil data order."
+                code: 500,
+                message: "Terjadi kesalahan pada server",
+                error: process.env.NODE_ENV === 'development' ? error.message : undefined
             });
         } finally {
             if (connection) {
