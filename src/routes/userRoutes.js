@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
 const upload = require('../middlewares/uploadMiddleware');
-const verifyToken = require('../middlewares/auth');
+const { verifyToken } = require('../middlewares/auth');
 
 /**
  * @route   GET /api/users
@@ -24,8 +24,8 @@ router.get('/:id', verifyToken, userController.getUserById);
  * @access  Private
  */
 router.put(
-    '/:id', 
-    verifyToken, 
+    '/:id',
+    verifyToken,
     upload.single('profile_pic'), // Middleware untuk handle upload satu file
     userController.updateUser
 );
