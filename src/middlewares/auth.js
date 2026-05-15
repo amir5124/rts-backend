@@ -1,17 +1,60 @@
 const jwt = require('jsonwebtoken');
+const db = require('../config/db');
 
-const verifyToken = (req, res, next) => {
-    const token = req.headers['authorization']?.split(' ')[1];
+const JWT_SECRET = process.env.JWT_SECRET || 'rahasia_super_kuat_amir';
 
-    if (!token) return res.status(403).json({ message: "Token diperlukan" });
+const verifyToken = async (req, res, next) => {
+    const token = req.headers.authorization?.split(' ')[1];
+
+    if (!token) {
+        return res.status(401).json({
+            success: false,
+            message: 'Akses ditolak. Token tidak ditemukan.'
+        });
+    }
 
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.user = decoded; // Berisi id, role, dll
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.user = decoded;
+
+        // Verify user still exists
+        const [rows] = await db.query('SELECT id, role FROM users WHERE id = ? AND is_active = 1', [decoded.id]);
+
+        if (rows.length === 0) {
+            return res.status(401).json({
+                success: false,
+                message: 'User tidak ditemukan atau tidak aktif'
+            });
+        }
+
+        req.user.role = rows[0].role;
         next();
-    } catch (err) {
-        return res.status(401).json({ message: "Token tidak valid" });
+    } catch (error) {
+        return res.status(401).json({
+            success: false,
+            message: 'Token tidak valid'
+        });
     }
 };
 
-module.exports = verifyToken;
+const isMitra = (req, res, next) => {
+    if (req.user.role !== 'mitra') {
+        return res.status(403).json({
+            success: false,
+            message: 'Akses ditolak. Hanya untuk mitra.'
+        });
+    }
+    next();
+};
+
+const isAdmin = (req, res, next) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({
+            success: false,
+            message: 'Akses ditolak. Hanya untuk admin.'
+        });
+    }
+    next();
+};
+
+module.exports = { verifyToken, isMitra, isAdmin };
