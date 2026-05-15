@@ -325,6 +325,62 @@ const mitraController = {
         }
     },
 
+    // Di mitraController.js
+    checkMitraProfile: async (req, res) => {
+        const { user_id } = req.params;
+
+        try {
+            const [rows] = await db.execute(
+                `SELECT 
+                id, specialization, address, working_days, 
+                working_start, working_end, bank_name, 
+                bank_account_number, bank_account_name
+             FROM mitra_details 
+             WHERE user_id = ?`,
+                [user_id]
+            );
+
+            if (rows.length === 0) {
+                return res.json({
+                    success: true,
+                    data: { is_complete: false, missing_fields: ['all'] }
+                });
+            }
+
+            const mitra = rows[0];
+
+            // Cek field yang wajib diisi
+            const requiredFields = [
+                'specialization', 'address', 'working_days',
+                'working_start', 'working_end', 'bank_name',
+                'bank_account_number', 'bank_account_name'
+            ];
+
+            const missingFields = requiredFields.filter(field => {
+                const value = mitra[field];
+                return !value || (typeof value === 'string' && value.trim() === '') ||
+                    (Array.isArray(value) && value.length === 0);
+            });
+
+            const isComplete = missingFields.length === 0;
+
+            res.json({
+                success: true,
+                data: {
+                    is_complete: isComplete,
+                    missing_fields: missingFields
+                }
+            });
+
+        } catch (error) {
+            console.error('Check Mitra Profile Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Terjadi kesalahan pada server'
+            });
+        }
+    },
+
     // Dashboard mitra
     getDashboard: async (req, res) => {
         let connection;
