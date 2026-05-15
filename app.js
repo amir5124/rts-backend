@@ -14,6 +14,7 @@ const userRoutes = require('./src/routes/userRoutes');
 const orderRoutes = require('./src/routes/orderRoutes');
 const paymentRoutes = require('./src/routes/paymentRoutes');
 const mitraRoutes = require('./src/routes/mitraRoutes');
+const walletRoutes = require('./src/routes/walletRoutes');
 
 // Import Cron Jobs (Otomatis berjalan saat server start)
 // require('./src/jobs/escrowJob');
@@ -46,6 +47,7 @@ app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/orders', orderRoutes);
 app.use('/api/v1/payments', paymentRoutes);
 app.use('/api/v1/mitra', mitraRoutes);
+app.use('/api/v1/wallet', walletRoutes);
 
 // Root URL untuk pengecekan status server
 app.get('/', (req, res) => {
