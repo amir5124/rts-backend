@@ -126,7 +126,6 @@ const OrderController = {
         let connection;
         const { customer_id } = req.params;
 
-        // Mapping bank_code ke nama bank
         const getBankName = (bankCode) => {
             const bankMap = {
                 '002': 'BANK BRI',
@@ -155,9 +154,22 @@ const OrderController = {
                     o.address_detail,
                     o.latitude_dest,
                     o.longitude_dest,
-                    o.payment_method_id,
-                    o.payment_method_name,
+                    o.mitra_id,
+                    o.confirmed_at_mitra,
+                    o.confirmed_at_customer,
+                    o.note,
                     s.service_name,
+                    s.base_price,
+                    -- Informasi Mitra/Terapis
+                    u.name as mitra_name,
+                    u.phone as mitra_phone,
+                    u.profile_pic as mitra_profile_pic,
+                    md.specialization,
+                    md.is_verified as mitra_is_verified,
+                    md.is_online as mitra_is_online,
+                    md.avg_rating as mitra_rating,
+                    md.certificate_url,
+                    -- Informasi Payment
                     p.external_id as payment_code,
                     p.partner_reff,
                     p.method as payment_method,
@@ -167,11 +179,12 @@ const OrderController = {
                     p.amount as payment_amount,
                     p.status as payment_status,
                     p.expired_at as payment_expiry,
-                    p.paid_at,
-                    p.created_at as payment_created_at
+                    p.paid_at
                 FROM orders o
-                LEFT JOIN payments p ON o.id = p.order_id
                 LEFT JOIN services s ON o.service_id = s.id
+                LEFT JOIN users u ON o.mitra_id = u.id
+                LEFT JOIN mitra_details md ON u.id = md.user_id
+                LEFT JOIN payments p ON o.id = p.order_id
                 WHERE o.customer_id = ?
                 ORDER BY o.created_at DESC
             `;
@@ -186,7 +199,7 @@ const OrderController = {
             }
 
             const formattedOrders = orders.map(order => {
-                // Format payment details berdasarkan method
+                // Format payment details
                 let paymentDetails = null;
 
                 if (order.payment_code) {
@@ -199,24 +212,19 @@ const OrderController = {
                         amount: parseFloat(order.payment_amount),
                         status: order.payment_status,
                         expiry: order.payment_expiry,
-                        paid_at: order.paid_at,
-                        created_at: order.payment_created_at
+                        paid_at: order.paid_at
                     };
 
-                    // Detail khusus Virtual Account (VA)
                     if (!isQris && order.va_number) {
                         paymentDetails.bank = {
                             code: order.bank_code,
                             name: getBankName(order.bank_code)
                         };
                         paymentDetails.virtual_account = order.va_number;
-                        paymentDetails.payment_instruction = `Silakan transfer ke Virtual Account ${order.va_number} a/n ${getBankName(order.bank_code)}`;
                     }
 
-                    // Detail khusus QRIS
                     if (isQris && order.qris_url) {
                         paymentDetails.qris_url = order.qris_url;
-                        paymentDetails.payment_instruction = 'Scan QR code menggunakan aplikasi mobile banking yang mendukung QRIS';
                     }
                 }
 
@@ -226,21 +234,34 @@ const OrderController = {
                     status: order.status,
                     total_amount: parseFloat(order.total_amount),
                     scheduled_at: order.scheduled_at,
+                    note: order.note,
                     service_info: {
                         id: order.service_id,
-                        name: order.service_name
+                        name: order.service_name,
+                        base_price: parseFloat(order.base_price)
                     },
+                    mitra_info: order.mitra_id ? {
+                        id: order.mitra_id,
+                        name: order.mitra_name,
+                        phone: order.mitra_phone,
+                        profile_pic: order.mitra_profile_pic,
+                        rating: parseFloat(order.mitra_rating) || 0,
+                        is_verified: order.mitra_is_verified === 1,
+                        is_online: order.mitra_is_online === 1,
+                        specialization: order.specialization,
+                        certificate_url: order.certificate_url
+                    } : null,
                     location: {
                         address: order.address_google,
                         detail: order.address_detail,
                         latitude: order.latitude_dest ? parseFloat(order.latitude_dest) : null,
                         longitude: order.longitude_dest ? parseFloat(order.longitude_dest) : null
                     },
-                    payment_details: paymentDetails,
-                    payment_method: {
-                        id: order.payment_method_id,
-                        name: order.payment_method_name
+                    confirmation: {
+                        mitra_confirmed_at: order.confirmed_at_mitra,
+                        customer_confirmed_at: order.confirmed_at_customer
                     },
+                    payment_details: paymentDetails,
                     created_at: order.created_at
                 };
             });
