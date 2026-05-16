@@ -10,11 +10,14 @@ const ServiceModel = {
                 s.description,
                 s.service_image,
                 s.created_at,
-                JSON_ARRAYAGG(
-                    JSON_OBJECT(
-                        'duration', sp.duration,
-                        'price', sp.price
-                    )
+                COALESCE(
+                    JSON_ARRAYAGG(
+                        JSON_OBJECT(
+                            'duration', sp.duration,
+                            'price', sp.price
+                        )
+                    ),
+                    JSON_ARRAY()
                 ) AS prices
             FROM services s
             LEFT JOIN service_prices sp ON s.id = sp.service_id
@@ -22,10 +25,27 @@ const ServiceModel = {
             ORDER BY s.id
         `;
         const [rows] = await db.query(query);
-        return rows.map(row => ({
-            ...row,
-            prices: JSON.parse(row.prices)
-        }));
+
+        return rows.map(row => {
+            // Handle jika prices adalah string kosong atau null
+            let prices = [];
+            if (row.prices && row.prices !== '[]' && row.prices !== 'null') {
+                try {
+                    prices = JSON.parse(row.prices);
+                } catch (e) {
+                    console.error('Error parsing prices for service:', row.id, e);
+                    prices = [];
+                }
+            }
+            return {
+                id: row.id,
+                service_name: row.service_name,
+                description: row.description,
+                service_image: row.service_image,
+                created_at: row.created_at,
+                prices: prices
+            };
+        });
     },
 
     // Mendapatkan layanan berdasarkan ID
@@ -37,11 +57,14 @@ const ServiceModel = {
                 s.description,
                 s.service_image,
                 s.created_at,
-                JSON_ARRAYAGG(
-                    JSON_OBJECT(
-                        'duration', sp.duration,
-                        'price', sp.price
-                    )
+                COALESCE(
+                    JSON_ARRAYAGG(
+                        JSON_OBJECT(
+                            'duration', sp.duration,
+                            'price', sp.price
+                        )
+                    ),
+                    JSON_ARRAY()
                 ) AS prices
             FROM services s
             LEFT JOIN service_prices sp ON s.id = sp.service_id
@@ -49,10 +72,26 @@ const ServiceModel = {
             GROUP BY s.id
         `;
         const [rows] = await db.query(query, [id]);
+
         if (rows.length === 0) return null;
+
+        let prices = [];
+        if (rows[0].prices && rows[0].prices !== '[]' && rows[0].prices !== 'null') {
+            try {
+                prices = JSON.parse(rows[0].prices);
+            } catch (e) {
+                console.error('Error parsing prices for service:', id, e);
+                prices = [];
+            }
+        }
+
         return {
-            ...rows[0],
-            prices: JSON.parse(rows[0].prices)
+            id: rows[0].id,
+            service_name: rows[0].service_name,
+            description: rows[0].description,
+            service_image: rows[0].service_image,
+            created_at: rows[0].created_at,
+            prices: prices
         };
     },
 
@@ -82,12 +121,14 @@ const ServiceModel = {
             const serviceId = result.insertId;
 
             // Insert ke tabel service_prices
-            for (const price of prices) {
-                await connection.query(
-                    `INSERT INTO service_prices (service_id, duration, price) 
-                     VALUES (?, ?, ?)`,
-                    [serviceId, price.duration, price.price]
-                );
+            if (prices && prices.length > 0) {
+                for (const price of prices) {
+                    await connection.query(
+                        `INSERT INTO service_prices (service_id, duration, price) 
+                         VALUES (?, ?, ?)`,
+                        [serviceId, price.duration, price.price]
+                    );
+                }
             }
 
             await connection.commit();
@@ -106,15 +147,30 @@ const ServiceModel = {
         try {
             await connection.beginTransaction();
 
-            // Update tabel services
-            await connection.query(
-                `UPDATE services SET 
-                    service_name = COALESCE(?, service_name),
-                    description = COALESCE(?, description),
-                    service_image = COALESCE(?, service_image)
-                 WHERE id = ?`,
-                [serviceData.service_name, serviceData.description, serviceData.service_image, id]
-            );
+            // Build dynamic update query untuk services
+            const updateFields = [];
+            const updateValues = [];
+
+            if (serviceData.service_name !== undefined) {
+                updateFields.push('service_name = ?');
+                updateValues.push(serviceData.service_name);
+            }
+            if (serviceData.description !== undefined) {
+                updateFields.push('description = ?');
+                updateValues.push(serviceData.description);
+            }
+            if (serviceData.service_image !== undefined) {
+                updateFields.push('service_image = ?');
+                updateValues.push(serviceData.service_image);
+            }
+
+            if (updateFields.length > 0) {
+                updateValues.push(id);
+                await connection.query(
+                    `UPDATE services SET ${updateFields.join(', ')} WHERE id = ?`,
+                    updateValues
+                );
+            }
 
             // Update harga jika ada
             if (prices && prices.length > 0) {
@@ -151,6 +207,63 @@ const ServiceModel = {
     getAllDurations: async () => {
         const [rows] = await db.query(`SELECT DISTINCT duration FROM service_prices ORDER BY duration`);
         return rows.map(row => row.duration);
+    },
+
+    // Tambahan: Mendapatkan service dengan minimal informasi (tanpa JSON_ARRAYAGG)
+    getServicesBasic: async () => {
+        const query = `
+            SELECT 
+                s.id,
+                s.service_name,
+                s.description,
+                s.service_image,
+                s.created_at
+            FROM services s
+            ORDER BY s.id
+        `;
+        const [rows] = await db.query(query);
+        return rows;
+    },
+
+    // Tambahan: Mendapatkan harga per service dalam format berbeda
+    getServicesWithPricesFlat: async () => {
+        const query = `
+            SELECT 
+                s.id,
+                s.service_name,
+                s.description,
+                s.service_image,
+                sp.duration,
+                sp.price
+            FROM services s
+            LEFT JOIN service_prices sp ON s.id = sp.service_id
+            ORDER BY s.id, sp.duration
+        `;
+        const [rows] = await db.query(query);
+
+        // Group by service
+        const servicesMap = new Map();
+
+        for (const row of rows) {
+            if (!servicesMap.has(row.id)) {
+                servicesMap.set(row.id, {
+                    id: row.id,
+                    service_name: row.service_name,
+                    description: row.description,
+                    service_image: row.service_image,
+                    prices: []
+                });
+            }
+
+            if (row.duration && row.price) {
+                servicesMap.get(row.id).prices.push({
+                    duration: row.duration,
+                    price: row.price
+                });
+            }
+        }
+
+        return Array.from(servicesMap.values());
     }
 };
 
