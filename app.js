@@ -60,6 +60,7 @@ const orderRoutes = require('./src/routes/orderRoutes');
 const paymentRoutes = require('./src/routes/paymentRoutes');
 const mitraRoutes = require('./src/routes/mitraRoutes');
 const walletRoutes = require('./src/routes/walletRoutes');
+const serviceRoutes = require('./src/routes/serviceRoutes');
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', userRoutes);
@@ -67,6 +68,8 @@ app.use('/api/v1/orders', orderRoutes);
 app.use('/api/v1/payments', paymentRoutes);
 app.use('/api/v1/mitra', mitraRoutes);
 app.use('/api/v1/wallet', walletRoutes);
+app.use('/api/v1/services', serviceRoutes);
+
 
 // Root Health Check
 app.get('/', (req, res) => {
