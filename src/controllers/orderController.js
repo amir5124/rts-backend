@@ -122,11 +122,12 @@ const OrderController = {
     },
 
     // 2. FUNGSI GET ORDER BY CUSTOMER (DIPERBAIKI)
+    // 2. FUNGSI GET ORDER BY CUSTOMER (DIPERBAIKI - TANPA base_price)
     getOrdersByCustomer: async (req, res) => {
         let connection;
         const { customer_id } = req.params;
 
-        // Mapping bank code ke nama bank (untuk referensi, bukan untuk instruksi)
+        // Mapping bank code ke nama bank
         const getBankName = (bankCode) => {
             const bankMap = {
                 '002': 'BANK BRI',
@@ -143,55 +144,55 @@ const OrderController = {
             connection = await db.getConnection();
 
             const query = `
-                SELECT 
-                    o.id,
-                    o.order_code,
-                    o.status,
-                    o.total_amount,
-                    o.scheduled_at,
-                    o.service_id,
-                    o.created_at,
-                    o.address_google,
-                    o.address_detail,
-                    o.latitude_dest,
-                    o.longitude_dest,
-                    o.mitra_id,
-                    o.confirmed_at_mitra,
-                    o.confirmed_at_customer,
-                    o.note,
-                    s.service_name,
-                    s.base_price,
-                    -- Informasi Mitra/Terapis
-                    u.name as mitra_name,
-                    u.phone as mitra_phone,
-                    u.profile_pic as mitra_profile_pic,
-                    md.specialization,
-                    md.is_verified as mitra_is_verified,
-                    md.is_online as mitra_is_online,
-                    md.avg_rating as mitra_rating,
-                    md.certificate_url,
-                    -- Informasi Payment
-                    p.id as payment_id,
-                    p.partner_reff,
-                    p.external_id,
-                    p.method as payment_method,
-                    p.bank_code,
-                    p.va_number,
-                    p.qris_url,
-                    p.amount as payment_amount,
-                    p.fee_admin_pg,
-                    p.status as payment_status,
-                    p.expired_at as payment_expiry,
-                    p.paid_at,
-                    p.created_at as payment_created_at
-                FROM orders o
-                LEFT JOIN services s ON o.service_id = s.id
-                LEFT JOIN users u ON o.mitra_id = u.id
-                LEFT JOIN mitra_details md ON u.id = md.user_id
-                LEFT JOIN payments p ON o.id = p.order_id
-                WHERE o.customer_id = ?
-                ORDER BY o.created_at DESC
-            `;
+            SELECT 
+                o.id, 
+                o.order_code,
+                o.status,
+                o.total_amount,
+                o.scheduled_at,
+                o.service_id,
+                o.duration,
+                o.created_at,
+                o.address_google,
+                o.address_detail,
+                o.latitude_dest,
+                o.longitude_dest,
+                o.mitra_id,
+                o.confirmed_at_mitra,
+                o.confirmed_at_customer,
+                o.note,
+                s.service_name,
+                s.description as service_description,
+                -- Informasi Mitra/Terapis
+                u.name as mitra_name,
+                u.phone as mitra_phone,
+                u.profile_pic as mitra_profile_pic,
+                md.specialization,
+                md.is_verified as mitra_is_verified,
+                md.is_online as mitra_is_online,
+                md.certificate_url,
+                -- Informasi Payment
+                p.id as payment_id,
+                p.partner_reff,
+                p.external_id,
+                p.method as payment_method,
+                p.bank_code,
+                p.va_number,
+                p.qris_url,
+                p.amount as payment_amount,
+                p.fee_admin_pg,
+                p.status as payment_status,
+                p.expired_at as payment_expiry,
+                p.paid_at,
+                p.created_at as payment_created_at
+            FROM orders o
+            LEFT JOIN services s ON o.service_id = s.id
+            LEFT JOIN users u ON o.mitra_id = u.id
+            LEFT JOIN mitra_details md ON u.id = md.user_id
+            LEFT JOIN payments p ON o.id = p.order_id
+            WHERE o.customer_id = ?
+            ORDER BY o.created_at DESC
+        `;
 
             const [orders] = await connection.query(query, [customer_id]);
 
@@ -202,12 +203,32 @@ const OrderController = {
                 });
             }
 
-            const formattedOrders = orders.map(order => {
-                // Format payment details - DATA MENTAH SAJA
+            // Hitung rata-rata rating untuk setiap mitra
+            const formattedOrders = await Promise.all(orders.map(async (order) => {
+                // Hitung rata-rata rating mitra jika ada
+                let mitraRating = 0;
+                if (order.mitra_id) {
+                    const [ratingResult] = await connection.query(
+                        "SELECT COALESCE(AVG(rating), 0) as avg_rating FROM reviews WHERE mitra_id = ?",
+                        [order.mitra_id]
+                    );
+                    mitraRating = parseFloat(ratingResult[0]?.avg_rating) || 0;
+                }
+
+                // Ambil harga dari service_prices berdasarkan service_id dan duration
+                let servicePrice = 0;
+                if (order.service_id && order.duration) {
+                    const [priceResult] = await connection.query(
+                        "SELECT price FROM service_prices WHERE service_id = ? AND duration = ?",
+                        [order.service_id, order.duration]
+                    );
+                    servicePrice = parseFloat(priceResult[0]?.price) || 0;
+                }
+
+                // Format payment details
                 let paymentDetails = null;
 
                 if (order.payment_id || order.partner_reff) {
-                    // Base payment data
                     paymentDetails = {
                         id: order.payment_id,
                         partner_reff: order.partner_reff,
@@ -221,7 +242,7 @@ const OrderController = {
                         created_at: order.payment_created_at
                     };
 
-                    // Data spesifik berdasarkan metode pembayaran (RAW DATA)
+                    // Data spesifik berdasarkan metode pembayaran
                     if (order.payment_method === 'VA' && order.va_number) {
                         paymentDetails.virtual_account = {
                             bank_code: order.bank_code,
@@ -234,11 +255,6 @@ const OrderController = {
                             qris_url: order.qris_url
                         };
                     }
-                    else if (order.payment_method === 'MANUAL') {
-                        paymentDetails.manual = {
-                            instructions: null // Frontend yang tentukan
-                        };
-                    }
                 }
 
                 return {
@@ -248,12 +264,14 @@ const OrderController = {
                     total_amount: parseFloat(order.total_amount),
                     scheduled_at: order.scheduled_at,
                     note: order.note,
+                    duration: order.duration,
 
                     // Service Info
                     service: {
                         id: order.service_id,
                         name: order.service_name,
-                        base_price: parseFloat(order.base_price) || 0
+                        description: order.service_description,
+                        price: servicePrice
                     },
 
                     // Mitra Info
@@ -262,7 +280,7 @@ const OrderController = {
                         name: order.mitra_name,
                         phone: order.mitra_phone,
                         profile_pic: order.mitra_profile_pic,
-                        rating: parseFloat(order.mitra_rating) || 0,
+                        rating: mitraRating,
                         is_verified: Boolean(order.mitra_is_verified),
                         is_online: Boolean(order.mitra_is_online),
                         specialization: order.specialization,
@@ -283,14 +301,13 @@ const OrderController = {
                         customer_confirmed_at: order.confirmed_at_customer
                     },
 
-                    // Payment Info (RAW DATA)
+                    // Payment Info
                     payment: paymentDetails,
 
                     // Metadata
-                    created_at: order.created_at,
-                    updated_at: order.updated_at
+                    created_at: order.created_at
                 };
-            });
+            }));
 
             return res.json({
                 success: true,

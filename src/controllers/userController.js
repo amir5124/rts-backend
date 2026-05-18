@@ -1,110 +1,121 @@
-const User = require('../models/userModel');
-const bcrypt = require('bcryptjs');
-const fs = require('fs'); // Penting untuk menghapus foto lama jika diganti
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Stack, useRouter, useSegments } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, View } from 'react-native';
+import Toast from 'react-native-toast-message';
+import "../global.css";
 
-const userController = {
-    // 1. Ambil semua User
-    getUsers: async (req, res) => {
+// 1. Variabel bantuan untuk trigger login dari luar (misal: Login.tsx)
+
+
+export default function RootLayout() {
+    const [isLoading, setIsLoading] = useState(true);
+    const [userToken, setUserToken] = useState < string | null > (null);
+
+    const segments = useSegments();
+    const router = useRouter();
+
+    // 2. Fungsi untuk sinkronisasi token
+    const checkToken = async () => {
         try {
-            const [users] = await User.findAll();
-            res.json(users);
-        } catch (err) {
-            res.status(500).json({ message: err.message });
+            const token = await AsyncStorage.getItem('userToken');
+            console.log('Token found:', !!token);
+            setUserToken(token);
+        } catch (e) {
+            console.error("Gagal mengambil token", e);
+        } finally {
+            // Beri sedikit delay agar transisi tidak terlalu kaget
+            setTimeout(() => setIsLoading(false), 500);
         }
-    },
+    };
 
-    // 2. Ambil User berdasarkan ID
-    getUserById: async (req, res) => {
-        try {
-            const user = await User.findById(req.params.id);
-            if (!user) return res.status(404).json({ message: "User tidak ditemukan" });
+    useEffect(() => {
+        triggerLoginGlobal = checkToken;
+        checkToken();
+    }, []);
 
-            // Jangan tampilkan password di response
-            const { password, ...userData } = user;
-            res.json(userData);
-        } catch (err) {
-            res.status(500).json({ message: err.message });
+    // 3. Logika Proteksi Route yang Modern - DIPERBAIKI
+    useEffect(() => {
+        if (isLoading) return;
+
+        const inAuthGroup = segments[0] === '(auth)';
+        const inTabsGroup = segments[0] === '(tabs)';
+        const inRegisterMitra = segments[1] === 'register-mitra';
+        const inPendingReview = segments[1] === 'pending-review';
+        const inAuthPages = inRegisterMitra || inPendingReview;
+
+        console.log('Navigation check:', {
+            isLoading,
+            userToken: !!userToken,
+            segments: segments[0],
+            inAuthGroup,
+            inTabsGroup,
+            inAuthPages
+        });
+
+        // Jika tidak ada token dan tidak di halaman auth, redirect ke login
+        if (!userToken && !inAuthGroup) {
+            console.log('Redirect to login - no token');
+            router.replace('/(auth)/login');
         }
-    },
-
-    // 3. Edit Profile (Termasuk Foto)
-    updateUser: async (req, res) => {
-        try {
-            const id = req.params.id;
-            const currentUser = await User.findById(id);
-            if (!currentUser) return res.status(404).json({ message: "User tidak ditemukan" });
-
-            let profilePicPath = currentUser.profile_pic;
-
-            // Logika jika ada file foto baru yang diunggah
-            if (req.file) {
-                profilePicPath = req.file.filename;
-
-                // Hapus foto lama dari storage agar tidak menumpuk
-                if (currentUser.profile_pic && fs.existsSync(`./uploads/${currentUser.profile_pic}`)) {
-                    fs.unlinkSync(`./uploads/${currentUser.profile_pic}`);
-                }
-            }
-
-            const data = {
-                name: req.body.name || currentUser.name,
-                email: req.body.email || currentUser.email,
-                phone: req.body.phone || currentUser.phone,
-                profile_pic: profilePicPath
-            };
-
-            await User.update(id, data);
-            res.json({
-                message: "Profile berhasil diperbarui",
-                data: data
-            });
-        } catch (err) {
-            res.status(500).json({ message: err.message });
+        // Jika ada token dan sedang di halaman auth (login/register), redirect ke tabs
+        else if (userToken && inAuthGroup && !inAuthPages) {
+            console.log('Redirect to tabs - user logged in and in auth page');
+            router.replace('/(tabs)');
         }
-    },
-
-    // 4. Ganti Password (Khusus)
-    changePassword: async (req, res) => {
-        try {
-            const id = req.params.id;
-            const { oldPassword, newPassword } = req.body;
-
-            const user = await User.findById(id);
-            if (!user) return res.status(404).json({ message: "User tidak ditemukan" });
-
-            // Validasi password lama
-            const isMatch = await bcrypt.compare(oldPassword, user.password);
-            if (!isMatch) return res.status(400).json({ message: "Password lama salah" });
-
-            // Hash password baru
-            const salt = await bcrypt.genSalt(10);
-            const hashedStorePassword = await bcrypt.hash(newPassword, salt);
-
-            await User.updatePassword(id, hashedStorePassword);
-            res.json({ message: "Password berhasil diganti" });
-        } catch (err) {
-            res.status(500).json({ message: err.message });
+        // Jika ada token dan sedang di halaman tabs, biarkan (tidak perlu redirect)
+        else if (userToken && inTabsGroup) {
+            console.log('Already in tabs, stay');
         }
-    },
 
-    // 5. Hapus User
-    deleteUser: async (req, res) => {
-        try {
-            const user = await User.findById(req.params.id);
-            if (user && user.profile_pic) {
-                // Hapus file fisik jika user dihapus
-                if (fs.existsSync(`./uploads/${user.profile_pic}`)) {
-                    fs.unlinkSync(`./uploads/${user.profile_pic}`);
-                }
-            }
+        // HAPUS kondisi else yang melakukan redirect ke tabs
+    }, [userToken, isLoading, segments]);
 
-            await User.delete(req.params.id);
-            res.json({ message: "User berhasil dihapus" });
-        } catch (err) {
-            res.status(500).json({ message: err.message });
-        }
+    // 4. Loading Screen dengan gaya modern
+    if (isLoading) {
+        return (
+            <View className="flex-1 justify-center items-center bg-white">
+                <ActivityIndicator size="large" color="#FF0000" />
+            </View>
+        );
     }
-};
 
-// Pastikan baris ini ada di paling bawah file controller!
-module.exports = userController;
+    return (
+        <>
+            <Stack screenOptions={{ headerShown: false }}>
+                {/* Pastikan struktur rute sesuai dengan nama folder kamu */}
+                <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+                <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+
+                {/* Halaman Modal / Card untuk UX yang lebih baik */}
+                <Stack.Screen
+                    name="edit-profile"
+                    options={{
+                        presentation: 'modal',
+                        headerShown: true,
+                        title: 'Edit Profil'
+                    }}
+                />
+                <Stack.Screen
+                    name="change-password"
+                    options={{
+                        presentation: 'modal',
+                        headerShown: true,
+                        title: 'Ganti Kata Sandi'
+                    }}
+                />
+                <Stack.Screen
+                    name="payment-intruction"
+                    options={{
+                        presentation: 'card',
+                        headerShown: true,
+                        title: 'Instruksi Pembayaran'
+                    }}
+                />
+            </Stack>
+
+            {/* Toast diletakkan paling luar agar selalu muncul di atas rute apa pun */}
+            <Toast />
+        </>
+    );
+}
