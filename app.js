@@ -22,6 +22,8 @@ app.use(helmet({
 const allowedOrigins = [
     'http://localhost:8081', // Expo Web
     'http://localhost:8082', // Expo Go Web
+    'https://myrts.netlify.app', // Expo Go Web
+    'https://mitrarts.netlify.app', // Expo Go Web
     'https://api.siappgo.id',  // Production Domain
 ];
 
