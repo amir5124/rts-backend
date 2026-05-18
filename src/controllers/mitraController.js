@@ -14,6 +14,8 @@ const mitraController = {
                 specialization,
                 certificate_url,
                 address,
+                address_latitude,
+                address_longitude,
                 service_radius_km,
                 working_days,
                 working_start,
@@ -66,9 +68,11 @@ const mitraController = {
             const mitraQuery = `
                 INSERT INTO mitra_details (
                     user_id, specialization, certificate_url, address,
-                    service_radius_km, working_days, working_start, working_end,
-                    bank_name, bank_account_number, bank_account_name, is_verified, is_online
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+                    address_latitude, address_longitude, service_radius_km, 
+                    working_days, working_start, working_end,
+                    bank_name, bank_account_number, bank_account_name, 
+                    is_verified, is_online
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
             `;
 
             await connection.query(mitraQuery, [
@@ -76,6 +80,8 @@ const mitraController = {
                 specialization,
                 certificate_url || null,
                 address,
+                address_latitude || null,
+                address_longitude || null,
                 service_radius_km || 10,
                 working_days || '[]',
                 working_start || '09:00:00',
@@ -118,6 +124,93 @@ const mitraController = {
         }
     },
 
+    // NEW: Check status registrasi mitra
+    checkMitraStatus: async (req, res) => {
+        let connection;
+        const { user_id } = req.params;
+
+        try {
+            connection = await db.getConnection();
+
+            // Cek apakah user adalah mitra
+            const [userCheck] = await connection.query(
+                'SELECT id, role FROM users WHERE id = ? AND role = "mitra"',
+                [user_id]
+            );
+
+            if (userCheck.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'User mitra tidak ditemukan',
+                    data: {
+                        is_registered: false,
+                        is_verified: false,
+                        is_online: false
+                    }
+                });
+            }
+
+            // Cek data mitra_details
+            const [mitraData] = await connection.query(
+                `SELECT 
+                    is_verified, 
+                    is_online, 
+                    specialization,
+                    created_at,
+                    updated_at
+                FROM mitra_details 
+                WHERE user_id = ?`,
+                [user_id]
+            );
+
+            if (mitraData.length === 0) {
+                // Belum terdaftar sebagai mitra
+                return res.json({
+                    success: true,
+                    data: {
+                        is_registered: false,
+                        is_verified: false,
+                        is_online: false
+                    }
+                });
+            }
+
+            // Sudah terdaftar
+            const mitra = mitraData[0];
+
+            // Parse specialization jika berupa JSON string
+            let specialization = mitra.specialization;
+            try {
+                if (typeof specialization === 'string') {
+                    specialization = JSON.parse(specialization);
+                }
+            } catch (e) {
+                // Jika bukan JSON, biarkan sebagai string
+            }
+
+            res.json({
+                success: true,
+                data: {
+                    is_registered: true,
+                    is_verified: mitra.is_verified === 1,
+                    is_online: mitra.is_online === 1,
+                    specialization: specialization,
+                    registered_at: mitra.created_at,
+                    last_updated: mitra.updated_at
+                }
+            });
+
+        } catch (error) {
+            console.error('❌ Check Mitra Status Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Terjadi kesalahan pada server'
+            });
+        } finally {
+            if (connection) connection.release();
+        }
+    },
+
     // Dapatkan detail mitra berdasarkan user_id
     getMitraDetail: async (req, res) => {
         let connection;
@@ -138,6 +231,8 @@ const mitraController = {
                     m.is_verified,
                     m.is_online,
                     m.address,
+                    m.address_latitude,
+                    m.address_longitude,
                     m.service_radius_km,
                     m.working_days,
                     m.working_start,
@@ -162,9 +257,26 @@ const mitraController = {
                 });
             }
 
+            // Parse specialization dan working_days jika JSON
+            const data = rows[0];
+            if (data.specialization && typeof data.specialization === 'string') {
+                try {
+                    data.specialization = JSON.parse(data.specialization);
+                } catch (e) {
+                    // Biarkan sebagai string
+                }
+            }
+            if (data.working_days && typeof data.working_days === 'string') {
+                try {
+                    data.working_days = JSON.parse(data.working_days);
+                } catch (e) {
+                    // Biarkan sebagai string
+                }
+            }
+
             res.json({
                 success: true,
-                data: rows[0]
+                data: data
             });
 
         } catch (error) {
@@ -186,6 +298,8 @@ const mitraController = {
             specialization,
             certificate_url,
             address,
+            address_latitude,
+            address_longitude,
             service_radius_km,
             working_days,
             working_start,
@@ -218,8 +332,12 @@ const mitraController = {
             const mitraValues = [];
 
             if (specialization !== undefined) {
+                // Jika specialization adalah array, convert ke JSON string
+                const specializationValue = Array.isArray(specialization)
+                    ? JSON.stringify(specialization)
+                    : specialization;
                 mitraUpdates.push('specialization = ?');
-                mitraValues.push(specialization);
+                mitraValues.push(specializationValue);
             }
             if (certificate_url !== undefined) {
                 mitraUpdates.push('certificate_url = ?');
@@ -229,13 +347,24 @@ const mitraController = {
                 mitraUpdates.push('address = ?');
                 mitraValues.push(address);
             }
+            if (address_latitude !== undefined) {
+                mitraUpdates.push('address_latitude = ?');
+                mitraValues.push(address_latitude);
+            }
+            if (address_longitude !== undefined) {
+                mitraUpdates.push('address_longitude = ?');
+                mitraValues.push(address_longitude);
+            }
             if (service_radius_km !== undefined) {
                 mitraUpdates.push('service_radius_km = ?');
                 mitraValues.push(service_radius_km);
             }
             if (working_days !== undefined) {
+                const workingDaysValue = Array.isArray(working_days)
+                    ? JSON.stringify(working_days)
+                    : working_days;
                 mitraUpdates.push('working_days = ?');
-                mitraValues.push(working_days);
+                mitraValues.push(workingDaysValue);
             }
             if (working_start !== undefined) {
                 mitraUpdates.push('working_start = ?');
@@ -262,12 +391,6 @@ const mitraController = {
                 mitraValues.push(user_id);
                 const mitraQuery = `UPDATE mitra_details SET ${mitraUpdates.join(', ')} WHERE user_id = ?`;
                 await connection.query(mitraQuery, mitraValues);
-            } else {
-                await connection.rollback();
-                return res.status(400).json({
-                    success: false,
-                    message: 'Tidak ada field yang diupdate'
-                });
             }
 
             await connection.commit();
