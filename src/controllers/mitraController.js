@@ -604,6 +604,127 @@ const mitraController = {
         }
     },
 
+    // Get all therapists (verified and online)
+    getAllTherapists: async (req, res) => {
+        let connection;
+        const { verified, online } = req.query;
+
+        try {
+            connection = await db.getConnection();
+
+            let query = `
+            SELECT 
+                u.id,
+                u.name,
+                u.email,
+                u.phone,
+                u.profile_pic,
+                m.specialization,
+                m.is_verified,
+                m.is_online,
+                m.address,
+                m.service_radius_km,
+                COALESCE(AVG(r.rating), 0) as avg_rating
+            FROM users u
+            JOIN mitra_details m ON u.id = m.user_id
+            LEFT JOIN reviews r ON m.user_id = r.mitra_id
+            WHERE u.role = 'mitra'
+        `;
+
+            const queryParams = [];
+
+            if (verified === 'true') {
+                query += ` AND m.is_verified = 1`;
+            }
+
+            if (online === 'true') {
+                query += ` AND m.is_online = 1`;
+            }
+
+            query += ` GROUP BY u.id ORDER BY m.is_online DESC, avg_rating DESC`;
+
+            const [rows] = await connection.query(query, queryParams);
+
+            res.json({
+                success: true,
+                data: rows,
+                count: rows.length
+            });
+
+        } catch (error) {
+            console.error('❌ Get All Therapists Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Terjadi kesalahan pada server'
+            });
+        } finally {
+            if (connection) connection.release();
+        }
+    },
+
+    // Get therapists by service
+    getTherapistsByService: async (req, res) => {
+        let connection;
+        const { service_id } = req.params;
+
+        try {
+            connection = await db.getConnection();
+
+            const query = `
+            SELECT 
+                u.id,
+                u.name,
+                u.email,
+                u.phone,
+                u.profile_pic,
+                m.specialization,
+                m.is_verified,
+                m.is_online,
+                m.address,
+                m.service_radius_km,
+                COALESCE(AVG(r.rating), 0) as avg_rating
+            FROM users u
+            JOIN mitra_details m ON u.id = m.user_id
+            LEFT JOIN reviews r ON m.user_id = r.mitra_id
+            WHERE u.role = 'mitra' 
+            AND m.is_verified = 1 
+            AND m.is_online = 1
+            AND JSON_SEARCH(m.specialization, 'all', (SELECT service_name FROM services WHERE id = ?)) IS NOT NULL
+            GROUP BY u.id
+            ORDER BY avg_rating DESC
+        `;
+
+            const [rows] = await connection.query(query, [service_id]);
+
+            // Parse specialization
+            const therapists = rows.map(therapist => {
+                if (typeof therapist.specialization === 'string') {
+                    try {
+                        therapist.specialization = JSON.parse(therapist.specialization);
+                    } catch (e) {
+                        therapist.specialization = [therapist.specialization];
+                    }
+                }
+                return therapist;
+            });
+
+            res.json({
+                success: true,
+                data: therapists,
+                count: therapists.length
+            });
+
+        } catch (error) {
+            console.error('❌ Get Therapists By Service Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Terjadi kesalahan pada server'
+            });
+        } finally {
+            if (connection) connection.release();
+        }
+    },
+
     // Dashboard mitra
     getDashboard: async (req, res) => {
         let connection;
@@ -679,6 +800,7 @@ const mitraController = {
             if (connection) connection.release();
         }
     }
+
 };
 
 module.exports = mitraController;
