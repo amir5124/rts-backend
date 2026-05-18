@@ -15,5 +15,8 @@ router.put('/profile/:user_id', verifyToken, isMitra, mitraController.updateMitr
 router.get('/check-profile/:user_id', verifyToken, isMitra, mitraController.checkMitraProfile);
 router.patch('/toggle-online/:user_id', verifyToken, isMitra, mitraController.toggleOnlineStatus);
 router.get('/dashboard/:user_id', verifyToken, isMitra, mitraController.getDashboard);
+// Get all therapists (public)
+router.get('/therapists', mitraController.getAllTherapists);
+router.get('/therapists/service/:service_id', mitraController.getTherapistsByService);
 
 module.exports = router;
