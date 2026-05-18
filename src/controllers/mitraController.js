@@ -5,12 +5,13 @@ const mitraController = {
 
     // Registrasi Mitra Baru (tanpa name, email, phone - karena akan diambil dari token/login)
     // Asumsi: user sudah login dan user_id didapat dari token JWT
+    // Registrasi Mitra Baru
     registerMitra: async (req, res) => {
         let connection;
 
         try {
             const {
-                user_id,  // Didapat dari token JWT (middleware auth)
+                user_id,
                 specialization,
                 certificate_url,
                 address,
@@ -25,7 +26,7 @@ const mitraController = {
                 bank_account_name
             } = req.body;
 
-            // Validasi required fields (hanya field mitra_details)
+            // Validasi required fields
             if (!user_id || !specialization || !address) {
                 return res.status(400).json({
                     success: false,
@@ -64,26 +65,38 @@ const mitraController = {
                 });
             }
 
+            // Proses specialization (bisa array atau string)
+            let specializationValue = specialization;
+            if (Array.isArray(specialization)) {
+                specializationValue = JSON.stringify(specialization);
+            }
+
+            // Proses working_days
+            let workingDaysValue = working_days;
+            if (Array.isArray(working_days)) {
+                workingDaysValue = JSON.stringify(working_days);
+            }
+
             // Insert ke tabel mitra_details
             const mitraQuery = `
-                INSERT INTO mitra_details (
-                    user_id, specialization, certificate_url, address,
-                    address_latitude, address_longitude, service_radius_km, 
-                    working_days, working_start, working_end,
-                    bank_name, bank_account_number, bank_account_name, 
-                    is_verified, is_online
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
-            `;
+            INSERT INTO mitra_details (
+                user_id, specialization, certificate_url, address,
+                address_latitude, address_longitude, service_radius_km, 
+                working_days, working_start, working_end,
+                bank_name, bank_account_number, bank_account_name, 
+                is_verified, is_online
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+        `;
 
             await connection.query(mitraQuery, [
                 user_id,
-                specialization,
+                specializationValue,
                 certificate_url || null,
                 address,
                 address_latitude || null,
                 address_longitude || null,
                 service_radius_km || 10,
-                working_days || '[]',
+                workingDaysValue || '[]',
                 working_start || '09:00:00',
                 working_end || '17:00:00',
                 bank_name || null,
@@ -123,8 +136,8 @@ const mitraController = {
             if (connection) connection.release();
         }
     },
-
     // NEW: Check status registrasi mitra
+    // Check status registrasi mitra
     checkMitraStatus: async (req, res) => {
         let connection;
         const { user_id } = req.params;
@@ -150,16 +163,14 @@ const mitraController = {
                 });
             }
 
-            // Cek data mitra_details
+            // Cek data mitra_details (tanpa created_at dan updated_at)
             const [mitraData] = await connection.query(
                 `SELECT 
-                    is_verified, 
-                    is_online, 
-                    specialization,
-                    created_at,
-                    updated_at
-                FROM mitra_details 
-                WHERE user_id = ?`,
+                is_verified, 
+                is_online, 
+                specialization
+            FROM mitra_details 
+            WHERE user_id = ?`,
                 [user_id]
             );
 
@@ -180,12 +191,18 @@ const mitraController = {
 
             // Parse specialization jika berupa JSON string
             let specialization = mitra.specialization;
-            try {
-                if (typeof specialization === 'string') {
-                    specialization = JSON.parse(specialization);
+            if (specialization) {
+                try {
+                    // Coba parse jika string
+                    if (typeof specialization === 'string') {
+                        // Cek apakah itu JSON array
+                        if (specialization.startsWith('[')) {
+                            specialization = JSON.parse(specialization);
+                        }
+                    }
+                } catch (e) {
+                    console.log('Specialization is not JSON, keeping as string:', specialization);
                 }
-            } catch (e) {
-                // Jika bukan JSON, biarkan sebagai string
             }
 
             res.json({
@@ -194,9 +211,7 @@ const mitraController = {
                     is_registered: true,
                     is_verified: mitra.is_verified === 1,
                     is_online: mitra.is_online === 1,
-                    specialization: specialization,
-                    registered_at: mitra.created_at,
-                    last_updated: mitra.updated_at
+                    specialization: specialization
                 }
             });
 
@@ -210,7 +225,6 @@ const mitraController = {
             if (connection) connection.release();
         }
     },
-
     // Dapatkan detail mitra berdasarkan user_id
     getMitraDetail: async (req, res) => {
         let connection;
