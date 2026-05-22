@@ -17,9 +17,9 @@ router.patch('/toggle-online/:user_id', verifyToken, isMitra, mitraController.to
 router.get('/dashboard/:user_id', verifyToken, isMitra, mitraController.getDashboard);
 
 // ========== ADMIN ONLY ROUTES (harus login dan role admin) ==========
-router.get('/admin/registrations', verifyToken, isAdmin, mitraController.getAllMitraRegistrations);
-router.get('/admin/registrations/:user_id', verifyToken, isAdmin, mitraController.getMitraRegistrationDetail);
-router.put('/admin/approve/:user_id', verifyToken, isAdmin, mitraController.approveMitra);
-router.delete('/admin/delete/:user_id', verifyToken, isAdmin, mitraController.deleteMitra);
+router.get('/admin/registrations', mitraController.getAllMitraRegistrations);
+router.get('/admin/registrations/:user_id', mitraController.getMitraRegistrationDetail);
+router.put('/admin/approve/:user_id', mitraController.approveMitra);
+router.delete('/admin/delete/:user_id', mitraController.deleteMitra);
 
 module.exports = router;
