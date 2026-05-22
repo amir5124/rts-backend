@@ -21,6 +21,7 @@ const OrderController = {
             await connection.beginTransaction();
             console.log("DB: Transaksi dimulai.");
 
+            // Perbaiki query INSERT sesuai struktur tabel
             const queryInsert = `
                 INSERT INTO orders (
                     order_code, customer_id, mitra_id, service_id, duration,
@@ -240,9 +241,7 @@ const OrderController = {
         }
     },
 
-    // ========== FUNGSI YANG DITAMBAHKAN (SUPAYA TIDAK ERROR) ==========
-
-    // 3. GET ORDER BY ID
+    // 3. GET ORDER BY ID - DIPERBAIKI
     getOrderById: async (req, res) => {
         let connection;
         const { id } = req.params;
@@ -251,12 +250,25 @@ const OrderController = {
             connection = await db.getConnection();
 
             const [orders] = await connection.query(
-                `SELECT o.*, 
-                    u.name as customer_name, u.phone as customer_phone, u.email as customer_email,
-                    m.name as mitra_name, m.phone as mitra_phone, m.email as mitra_email
+                `SELECT 
+                    o.*,
+                    u.name as customer_name, 
+                    u.phone as customer_phone, 
+                    u.email as customer_email,
+                    m.name as mitra_name, 
+                    m.phone as mitra_phone, 
+                    m.email as mitra_email,
+                    s.service_name,
+                    p.method as payment_method,
+                    p.status as payment_status,
+                    p.amount as payment_amount,
+                    p.va_number,
+                    p.qris_url
                  FROM orders o
                  LEFT JOIN users u ON o.customer_id = u.id
                  LEFT JOIN users m ON o.mitra_id = m.id
+                 LEFT JOIN services s ON o.service_id = s.id
+                 LEFT JOIN payments p ON o.id = p.order_id
                  WHERE o.id = ?`,
                 [id]
             );
@@ -283,7 +295,7 @@ const OrderController = {
         }
     },
 
-    // 4. CANCEL ORDER
+    // 4. CANCEL ORDER - DIPERBAIKI (status sesuai database)
     cancelOrder: async (req, res) => {
         let connection;
         const { id } = req.params;
@@ -306,7 +318,8 @@ const OrderController = {
                 });
             }
 
-            const allowedStatus = ['pending_payment', 'waiting_confirmation'];
+            // Status yang bisa dibatalkan: pending_payment
+            const allowedStatus = ['pending_payment'];
             if (!allowedStatus.includes(order[0].status)) {
                 await connection.rollback();
                 return res.status(400).json({
@@ -316,8 +329,8 @@ const OrderController = {
             }
 
             await connection.query(
-                'UPDATE orders SET status = ?, cancelled_at = NOW(), cancellation_reason = ? WHERE id = ?',
-                ['cancelled', reason || 'Dibatalkan oleh customer', id]
+                'UPDATE orders SET status = ? WHERE id = ?',
+                ['cancelled', id]
             );
 
             await connection.commit();
@@ -338,27 +351,52 @@ const OrderController = {
         }
     },
 
-    // 5. GET ALL ORDERS (ADMIN ONLY)
+    // 5. GET ALL ORDERS (ADMIN ONLY) - DIPERBAIKI
     getAllOrders: async (req, res) => {
         let connection;
+        const { page = 1, limit = 10 } = req.query;
+        const offset = (page - 1) * limit;
 
         try {
             connection = await db.getConnection();
 
+            // Get total count
+            const [countResult] = await connection.query(`
+                SELECT COUNT(*) as total FROM orders
+            `);
+            const total = countResult[0].total;
+
+            // Get paginated orders
             const [orders] = await connection.query(`
-                SELECT o.*, 
-                    u.name as customer_name, u.email as customer_email,
-                    m.name as mitra_name, m.email as mitra_email
+                SELECT 
+                    o.id,
+                    o.order_code,
+                    o.status,
+                    o.total_amount,
+                    o.created_at,
+                    o.scheduled_at,
+                    u.name as customer_name,
+                    u.email as customer_email,
+                    m.name as mitra_name,
+                    m.email as mitra_email
                 FROM orders o
                 LEFT JOIN users u ON o.customer_id = u.id
                 LEFT JOIN users m ON o.mitra_id = m.id
                 ORDER BY o.created_at DESC
-            `);
+                LIMIT ? OFFSET ?
+            `, [parseInt(limit), offset]);
 
             return res.json({
                 success: true,
-                data: orders,
-                total: orders.length
+                data: {
+                    orders: orders,
+                    pagination: {
+                        page: parseInt(page),
+                        limit: parseInt(limit),
+                        total: total,
+                        total_pages: Math.ceil(total / limit)
+                    }
+                }
             });
         } catch (error) {
             console.error('Error in getAllOrders:', error);
@@ -371,46 +409,52 @@ const OrderController = {
         }
     },
 
-    // 6. GET ORDER STATISTICS (ADMIN ONLY)
+    // 6. GET ORDER STATISTICS (ADMIN ONLY) - DIPERBAIKI
     getOrderStatistics: async (req, res) => {
         let connection;
 
         try {
             connection = await db.getConnection();
 
-            const [stats] = await connection.query(`
+            // Overview statistics
+            const [overview] = await connection.query(`
                 SELECT 
                     COUNT(*) as total_orders,
-                    SUM(CASE WHEN status = 'pending_payment' THEN 1 ELSE 0 END) as pending_payment,
-                    SUM(CASE WHEN status = 'payment_success' THEN 1 ELSE 0 END) as payment_success,
-                    SUM(CASE WHEN status = 'waiting_confirmation' THEN 1 ELSE 0 END) as waiting_confirmation,
-                    SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
-                    SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) as accepted,
-                    SUM(CASE WHEN status = 'otw' THEN 1 ELSE 0 END) as otw,
-                    SUM(CASE WHEN status = 'ongoing' THEN 1 ELSE 0 END) as ongoing,
-                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-                    SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
                     COALESCE(SUM(CASE WHEN status = 'completed' THEN total_amount ELSE 0 END), 0) as total_revenue,
-                    COALESCE(AVG(CASE WHEN status = 'completed' THEN total_amount ELSE NULL END), 0) as average_order_value
+                    COALESCE(AVG(CASE WHEN status = 'completed' THEN total_amount ELSE NULL END), 0) as avg_order_value
                 FROM orders
             `);
 
-            const [dailyStats] = await connection.query(`
+            // Status breakdown
+            const [byStatus] = await connection.query(`
                 SELECT 
-                    DATE(created_at) as date,
-                    COUNT(*) as total_orders,
-                    COALESCE(SUM(total_amount), 0) as revenue
+                    status,
+                    COUNT(*) as total,
+                    COALESCE(SUM(total_amount), 0) as total_amount
                 FROM orders
-                WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-                GROUP BY DATE(created_at)
-                ORDER BY date DESC
+                GROUP BY status
+                ORDER BY total DESC
+            `);
+
+            // Monthly statistics (last 12 months)
+            const [monthly] = await connection.query(`
+                SELECT 
+                    DATE_FORMAT(created_at, '%Y-%m') as month,
+                    COUNT(*) as total_orders,
+                    COALESCE(SUM(total_amount), 0) as total_revenue,
+                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_orders
+                FROM orders
+                WHERE created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+                GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+                ORDER BY month DESC
             `);
 
             return res.json({
                 success: true,
                 data: {
-                    summary: stats[0],
-                    daily: dailyStats
+                    overview: overview[0],
+                    by_status: byStatus,
+                    monthly: monthly
                 }
             });
         } catch (error) {
@@ -424,21 +468,22 @@ const OrderController = {
         }
     },
 
-    // 7. UPDATE ORDER STATUS (ADMIN ONLY)
+    // 7. UPDATE ORDER STATUS (ADMIN ONLY) - DIPERBAIKI
     updateOrderStatus: async (req, res) => {
         let connection;
         const { id } = req.params;
         const { status } = req.body;
 
+        // Valid status sesuai dengan enum di database
         const validStatuses = [
-            'pending_payment', 'payment_success', 'waiting_confirmation',
-            'confirmed', 'accepted', 'otw', 'ongoing', 'completed', 'cancelled'
+            'pending_payment', 'pending', 'paid', 'otw',
+            'ongoing', 'completed', 'cancelled', 'released'
         ];
 
         if (!validStatuses.includes(status)) {
             return res.status(400).json({
                 success: false,
-                message: 'Status tidak valid'
+                message: 'Status tidak valid. Status yang valid: ' + validStatuses.join(', ')
             });
         }
 
@@ -460,7 +505,7 @@ const OrderController = {
             }
 
             await connection.query(
-                'UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?',
+                'UPDATE orders SET status = ? WHERE id = ?',
                 [status, id]
             );
 

@@ -12,6 +12,7 @@ router.get('/:id', OrderController.getOrderById);
 router.post('/:id/cancel', OrderController.cancelOrder);
 
 // ========== ADMIN ONLY ROUTES ==========
+// Tambahkan middleware verifyToken dan isAdmin untuk keamanan
 router.get('/all', OrderController.getAllOrders);
 router.get('/statistics', OrderController.getOrderStatistics);
 router.put('/:id/status', OrderController.updateOrderStatus);
