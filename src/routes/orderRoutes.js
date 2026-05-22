@@ -12,8 +12,8 @@ router.get('/:id', OrderController.getOrderById);
 router.post('/:id/cancel', OrderController.cancelOrder);
 
 // ========== ADMIN ONLY ROUTES ==========
-router.get('/all', verifyToken, isAdmin, OrderController.getAllOrders);
-router.get('/statistics', verifyToken, isAdmin, OrderController.getOrderStatistics);
-router.put('/:id/status', verifyToken, isAdmin, OrderController.updateOrderStatus);
+router.get('/all', OrderController.getAllOrders);
+router.get('/statistics', OrderController.getOrderStatistics);
+router.put('/:id/status', OrderController.updateOrderStatus);
 
 module.exports = router;
