@@ -725,6 +725,293 @@ const mitraController = {
         }
     },
 
+    // Approve mitra registration (Admin only)
+    approveMitra: async (req, res) => {
+        let connection;
+        const { user_id } = req.params;
+        const { is_verified } = req.body; // true/false
+
+        try {
+            connection = await db.getConnection();
+            await connection.beginTransaction();
+
+            // Cek apakah mitra exists
+            const [mitraCheck] = await connection.query(
+                'SELECT id, is_verified FROM mitra_details WHERE user_id = ?',
+                [user_id]
+            );
+
+            if (mitraCheck.length === 0) {
+                await connection.rollback();
+                return res.status(404).json({
+                    success: false,
+                    message: 'Mitra tidak ditemukan'
+                });
+            }
+
+            // Update status verifikasi
+            await connection.query(
+                'UPDATE mitra_details SET is_verified = ? WHERE user_id = ?',
+                [is_verified ? 1 : 0, user_id]
+            );
+
+            // Jika diverifikasi, tambahkan notifikasi
+            if (is_verified) {
+                await connection.query(
+                    `INSERT INTO notifications (user_id, title, message, type, is_read) 
+                 VALUES (?, ?, ?, ?, 0)`,
+                    [user_id, 'Akun Diverifikasi',
+                        'Selamat! Akun mitra Anda telah diverifikasi. Anda sekarang dapat mulai menerima pesanan.',
+                        'verification']
+                );
+            }
+
+            await connection.commit();
+
+            res.json({
+                success: true,
+                message: is_verified ? 'Mitra berhasil diverifikasi' : 'Verifikasi mitra dibatalkan',
+                data: { is_verified }
+            });
+
+        } catch (error) {
+            if (connection) await connection.rollback();
+            console.error('❌ Approve Mitra Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Terjadi kesalahan pada server'
+            });
+        } finally {
+            if (connection) connection.release();
+        }
+    },
+
+    // Get all mitra registrations (for admin)
+    getAllMitraRegistrations: async (req, res) => {
+        let connection;
+        const { status, search } = req.query; // status: all, pending, verified, rejected
+
+        try {
+            connection = await db.getConnection();
+
+            let query = `
+            SELECT 
+                u.id as user_id,
+                u.name,
+                u.email,
+                u.phone,
+                u.profile_pic,
+                u.created_at as user_created_at,
+                m.id as mitra_id,
+                m.specialization,
+                m.certificate_url,
+                m.is_verified,
+                m.address,
+                m.address_latitude,
+                m.address_longitude,
+                m.service_radius_km,
+                m.working_days,
+                m.working_start,
+                m.working_end,
+                m.bank_name,
+                m.bank_account_number,
+                m.bank_account_name,
+                m.created_at as mitra_registered_at,
+                COALESCE(
+                    (SELECT JSON_ARRAYAGG(
+                        JSON_OBJECT(
+                            'id', o.id,
+                            'total_amount', o.total_amount,
+                            'status', o.status,
+                            'scheduled_at', o.scheduled_at
+                        )
+                    ) FROM orders o WHERE o.mitra_id = m.user_id LIMIT 5),
+                    JSON_ARRAY()
+                ) as recent_orders
+            FROM users u
+            INNER JOIN mitra_details m ON u.id = m.user_id
+            WHERE u.role = 'mitra'
+        `;
+
+            const queryParams = [];
+
+            if (status === 'pending') {
+                query += ` AND m.is_verified = 0`;
+            } else if (status === 'verified') {
+                query += ` AND m.is_verified = 1`;
+            }
+
+            if (search) {
+                query += ` AND (u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)`;
+                const searchPattern = `%${search}%`;
+                queryParams.push(searchPattern, searchPattern, searchPattern);
+            }
+
+            query += ` ORDER BY m.created_at DESC`;
+
+            const [rows] = await connection.query(query, queryParams);
+
+            // Parse JSON fields
+            const registrations = rows.map(row => {
+                if (row.specialization && typeof row.specialization === 'string') {
+                    try {
+                        row.specialization = JSON.parse(row.specialization);
+                    } catch (e) { }
+                }
+                if (row.working_days && typeof row.working_days === 'string') {
+                    try {
+                        row.working_days = JSON.parse(row.working_days);
+                    } catch (e) { }
+                }
+                if (row.recent_orders && typeof row.recent_orders === 'string') {
+                    try {
+                        row.recent_orders = JSON.parse(row.recent_orders);
+                    } catch (e) {
+                        row.recent_orders = [];
+                    }
+                }
+                return row;
+            });
+
+            res.json({
+                success: true,
+                data: registrations,
+                total: registrations.length,
+                filters: { status, search }
+            });
+
+        } catch (error) {
+            console.error('❌ Get All Mitra Registrations Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Terjadi kesalahan pada server'
+            });
+        } finally {
+            if (connection) connection.release();
+        }
+    },
+
+    // Get detailed mitra registration by ID
+    getMitraRegistrationDetail: async (req, res) => {
+        let connection;
+        const { user_id } = req.params;
+
+        try {
+            connection = await db.getConnection();
+
+            const query = `
+            SELECT 
+                u.id as user_id,
+                u.name,
+                u.email,
+                u.phone,
+                u.profile_pic,
+                u.created_at as user_created_at,
+                m.*,
+                (
+                    SELECT COUNT(*) FROM orders WHERE mitra_id = m.user_id
+                ) as total_orders,
+                (
+                    SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE mitra_id = m.user_id
+                ) as avg_rating
+            FROM users u
+            INNER JOIN mitra_details m ON u.id = m.user_id
+            WHERE u.id = ? AND u.role = 'mitra'
+        `;
+
+            const [rows] = await connection.query(query, [user_id]);
+
+            if (rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Data mitra tidak ditemukan'
+                });
+            }
+
+            const mitra = rows[0];
+
+            // Parse JSON fields
+            if (mitra.specialization && typeof mitra.specialization === 'string') {
+                try {
+                    mitra.specialization = JSON.parse(mitra.specialization);
+                } catch (e) { }
+            }
+            if (mitra.working_days && typeof mitra.working_days === 'string') {
+                try {
+                    mitra.working_days = JSON.parse(mitra.working_days);
+                } catch (e) { }
+            }
+
+            res.json({
+                success: true,
+                data: mitra
+            });
+
+        } catch (error) {
+            console.error('❌ Get Mitra Registration Detail Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Terjadi kesalahan pada server'
+            });
+        } finally {
+            if (connection) connection.release();
+        }
+    },
+
+    // Delete mitra (admin only)
+    deleteMitra: async (req, res) => {
+        let connection;
+        const { user_id } = req.params;
+
+        try {
+            connection = await db.getConnection();
+            await connection.beginTransaction();
+
+            // Cek apakah mitra exists
+            const [mitraCheck] = await connection.query(
+                'SELECT user_id FROM mitra_details WHERE user_id = ?',
+                [user_id]
+            );
+
+            if (mitraCheck.length === 0) {
+                await connection.rollback();
+                return res.status(404).json({
+                    success: false,
+                    message: 'Mitra tidak ditemukan'
+                });
+            }
+
+            // Hapus data terkait (soft delete atau hard delete)
+            // Soft delete: update status
+            await connection.query(
+                'UPDATE users SET is_active = 0, role = "user" WHERE id = ?',
+                [user_id]
+            );
+
+            await connection.query(
+                'UPDATE mitra_details SET is_verified = 0, is_online = 0 WHERE user_id = ?',
+                [user_id]
+            );
+
+            await connection.commit();
+
+            res.json({
+                success: true,
+                message: 'Mitra berhasil dinonaktifkan'
+            });
+
+        } catch (error) {
+            if (connection) await connection.rollback();
+            console.error('❌ Delete Mitra Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Terjadi kesalahan pada server'
+            });
+        } finally {
+            if (connection) connection.release();
+        }
+    },
+
     // Dashboard mitra
     getDashboard: async (req, res) => {
         let connection;
@@ -800,6 +1087,8 @@ const mitraController = {
             if (connection) connection.release();
         }
     }
+
+
 
 };
 

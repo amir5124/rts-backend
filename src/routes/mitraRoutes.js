@@ -1,22 +1,25 @@
 const express = require('express');
 const router = express.Router();
 const mitraController = require('../controllers/mitraController');
-const { verifyToken, isMitra } = require('../middlewares/auth');
+const { verifyToken, isMitra, isAdmin } = require('../middlewares/auth'); // ← Tambahkan isAdmin
 
-// Public routes (tanpa auth untuk registrasi)
+// ========== PUBLIC ROUTES (tanpa auth) ==========
 router.post('/register', mitraController.registerMitra);
+router.get('/status/:user_id', mitraController.checkMitraStatus);
+router.get('/therapists', mitraController.getAllTherapists);
+router.get('/therapists/service/:service_id', mitraController.getTherapistsByService);
 
-// NEW: Check status - bisa tanpa auth atau dengan auth tergantung kebutuhan
-router.get('/status/:user_id', mitraController.checkMitraStatus); // Bisa diakses tanpa auth dulu
-
-// Protected routes (harus login dan role mitra)
+// ========== MITRA PROTECTED ROUTES (harus login dan role mitra) ==========
 router.get('/profile/:user_id', verifyToken, isMitra, mitraController.getMitraDetail);
 router.put('/profile/:user_id', verifyToken, isMitra, mitraController.updateMitraProfile);
 router.get('/check-profile/:user_id', verifyToken, isMitra, mitraController.checkMitraProfile);
 router.patch('/toggle-online/:user_id', verifyToken, isMitra, mitraController.toggleOnlineStatus);
 router.get('/dashboard/:user_id', verifyToken, isMitra, mitraController.getDashboard);
-// Get all therapists (public)
-router.get('/therapists', mitraController.getAllTherapists);
-router.get('/therapists/service/:service_id', mitraController.getTherapistsByService);
+
+// ========== ADMIN ONLY ROUTES (harus login dan role admin) ==========
+router.get('/admin/registrations', verifyToken, isAdmin, mitraController.getAllMitraRegistrations);
+router.get('/admin/registrations/:user_id', verifyToken, isAdmin, mitraController.getMitraRegistrationDetail);
+router.put('/admin/approve/:user_id', verifyToken, isAdmin, mitraController.approveMitra);
+router.delete('/admin/delete/:user_id', verifyToken, isAdmin, mitraController.deleteMitra);
 
 module.exports = router;
