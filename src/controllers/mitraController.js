@@ -787,9 +787,11 @@ const mitraController = {
     },
 
     // Get all mitra registrations (for admin)
+    // controllers/mitraController.js - Perbaiki fungsi getAllMitraRegistrations
+
     getAllMitraRegistrations: async (req, res) => {
         let connection;
-        const { status, search } = req.query; // status: all, pending, verified, rejected
+        const { status, search } = req.query;
 
         try {
             connection = await db.getConnection();
@@ -816,7 +818,7 @@ const mitraController = {
                 m.bank_name,
                 m.bank_account_number,
                 m.bank_account_name,
-                m.created_at as mitra_registered_at,
+                u.created_at as mitra_registered_at,
                 COALESCE(
                     (SELECT JSON_ARRAYAGG(
                         JSON_OBJECT(
@@ -847,7 +849,8 @@ const mitraController = {
                 queryParams.push(searchPattern, searchPattern, searchPattern);
             }
 
-            query += ` ORDER BY m.created_at DESC`;
+            // Gunakan u.created_at karena m.created_at tidak ada
+            query += ` ORDER BY u.created_at DESC`;
 
             const [rows] = await connection.query(query, queryParams);
 
@@ -884,13 +887,13 @@ const mitraController = {
             console.error('❌ Get All Mitra Registrations Error:', error);
             res.status(500).json({
                 success: false,
-                message: 'Terjadi kesalahan pada server'
+                message: 'Terjadi kesalahan pada server',
+                error: process.env.NODE_ENV === 'development' ? error.message : undefined
             });
         } finally {
             if (connection) connection.release();
         }
     },
-
     // Get detailed mitra registration by ID
     getMitraRegistrationDetail: async (req, res) => {
         let connection;
@@ -900,24 +903,38 @@ const mitraController = {
             connection = await db.getConnection();
 
             const query = `
-            SELECT 
-                u.id as user_id,
-                u.name,
-                u.email,
-                u.phone,
-                u.profile_pic,
-                u.created_at as user_created_at,
-                m.*,
-                (
-                    SELECT COUNT(*) FROM orders WHERE mitra_id = m.user_id
-                ) as total_orders,
-                (
-                    SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE mitra_id = m.user_id
-                ) as avg_rating
-            FROM users u
-            INNER JOIN mitra_details m ON u.id = m.user_id
-            WHERE u.id = ? AND u.role = 'mitra'
-        `;
+                SELECT 
+                    u.id as user_id,
+                    u.name,
+                    u.email,
+                    u.phone,
+                    u.profile_pic,
+                    u.created_at as user_created_at,
+                    m.id as mitra_id,
+                    m.specialization,
+                    m.certificate_url,
+                    m.is_verified,
+                    m.address,
+                    m.address_latitude,
+                    m.address_longitude,
+                    m.service_radius_km,
+                    m.working_days,
+                    m.working_start,
+                    m.working_end,
+                    m.bank_name,
+                    m.bank_account_number,
+                    m.bank_account_name,
+                    u.created_at as mitra_registered_at,
+                    (
+                        SELECT COUNT(*) FROM orders WHERE mitra_id = m.user_id
+                    ) as total_orders,
+                    (
+                        SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE mitra_id = m.user_id
+                    ) as avg_rating
+                FROM users u
+                INNER JOIN mitra_details m ON u.id = m.user_id
+                WHERE u.id = ? AND u.role = 'mitra'
+            `;
 
             const [rows] = await connection.query(query, [user_id]);
 
@@ -942,6 +959,10 @@ const mitraController = {
                 } catch (e) { }
             }
 
+            // Convert decimal to number
+            mitra.total_orders = parseInt(mitra.total_orders) || 0;
+            mitra.avg_rating = parseFloat(mitra.avg_rating) || 0;
+
             res.json({
                 success: true,
                 data: mitra
@@ -951,13 +972,13 @@ const mitraController = {
             console.error('❌ Get Mitra Registration Detail Error:', error);
             res.status(500).json({
                 success: false,
-                message: 'Terjadi kesalahan pada server'
+                message: 'Terjadi kesalahan pada server',
+                error: process.env.NODE_ENV === 'development' ? error.message : undefined
             });
         } finally {
             if (connection) connection.release();
         }
     },
-
     // Delete mitra (admin only)
     deleteMitra: async (req, res) => {
         let connection;
