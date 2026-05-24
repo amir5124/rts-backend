@@ -850,99 +850,175 @@ const mitraController = {
         try {
             connection = await db.getConnection();
 
+            // Query dasar untuk mengambil semua data mitra
             let query = `
-            SELECT 
-                u.id as user_id,
-                u.name,
-                u.email,
-                u.phone,
-                u.profile_pic,
-                u.created_at as user_created_at,
-                m.id as mitra_id,
-                m.specialization,
-                m.certificate_url,
-                m.is_verified,
-                m.address,
-                m.address_latitude,
-                m.address_longitude,
-                m.service_radius_km,
-                m.working_days,
-                m.working_start,
-                m.working_end,
-                m.bank_name,
-                m.bank_account_number,
-                m.bank_account_name,
-                u.created_at as mitra_registered_at,
-                COALESCE(
-                    (SELECT JSON_ARRAYAGG(
-                        JSON_OBJECT(
-                            'id', o.id,
-                            'total_amount', o.total_amount,
-                            'status', o.status,
-                            'scheduled_at', o.scheduled_at
-                        )
-                    ) FROM orders o WHERE o.mitra_id = m.user_id LIMIT 5),
-                    JSON_ARRAY()
-                ) as recent_orders
-            FROM users u
-            INNER JOIN mitra_details m ON u.id = m.user_id
-            WHERE u.role = 'mitra'
-        `;
+                SELECT 
+                    u.id as user_id,
+                    u.name,
+                    u.email,
+                    u.phone,
+                    u.profile_pic,
+                    u.created_at as user_created_at,
+                    m.id as mitra_id,
+                    m.specialization,
+                    m.certificate_url,
+                    m.is_verified,
+                    m.address,
+                    m.address_latitude,
+                    m.address_longitude,
+                    m.service_radius_km,
+                    m.working_days,
+                    m.working_start,
+                    m.working_end,
+                    m.bank_name,
+                    m.bank_account_number,
+                    m.bank_account_name,
+                    u.created_at as mitra_registered_at,
+                    COALESCE(
+                        (SELECT JSON_ARRAYAGG(
+                            JSON_OBJECT(
+                                'id', o.id,
+                                'total_amount', o.total_amount,
+                                'status', o.status,
+                                'scheduled_at', o.scheduled_at
+                            )
+                        ) FROM orders o WHERE o.mitra_id = m.user_id LIMIT 5),
+                        JSON_ARRAY()
+                    ) as recent_orders,
+                    (
+                        SELECT COUNT(*) FROM orders WHERE mitra_id = m.user_id
+                    ) as total_orders,
+                    (
+                        SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE mitra_id = m.user_id
+                    ) as avg_rating
+                FROM users u
+                INNER JOIN mitra_details m ON u.id = m.user_id
+                WHERE u.role = 'mitra'
+            `;
 
             const queryParams = [];
 
+            // Filter berdasarkan status verifikasi
+            // Status 'pending' = menunggu verifikasi (is_verified = 0)
+            // Status 'verified' = sudah terverifikasi (is_verified = 1)
+            // Status 'all' atau tidak ada status = tampilkan semua
             if (status === 'pending') {
                 query += ` AND m.is_verified = 0`;
             } else if (status === 'verified') {
                 query += ` AND m.is_verified = 1`;
             }
+            // Jika status === 'all' atau status undefined, tidak perlu menambahkan filter
 
-            if (search) {
+            // Filter pencarian berdasarkan nama, email, atau telepon
+            if (search && search.trim() !== '') {
                 query += ` AND (u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)`;
-                const searchPattern = `%${search}%`;
+                const searchPattern = `%${search.trim()}%`;
                 queryParams.push(searchPattern, searchPattern, searchPattern);
             }
 
-            // Gunakan u.created_at karena m.created_at tidak ada
+            // Urutkan berdasarkan tanggal pendaftaran terbaru
             query += ` ORDER BY u.created_at DESC`;
 
+            // Eksekusi query
             const [rows] = await connection.query(query, queryParams);
 
-            // Parse JSON fields
+            // Parse JSON fields untuk setiap baris data
             const registrations = rows.map(row => {
+                // Parse specialization dari JSON string ke array
                 if (row.specialization && typeof row.specialization === 'string') {
                     try {
                         row.specialization = JSON.parse(row.specialization);
-                    } catch (e) { }
+                        // Pastikan hasil parsing adalah array
+                        if (!Array.isArray(row.specialization)) {
+                            row.specialization = [row.specialization];
+                        }
+                    } catch (e) {
+                        console.log('Specialization parse error:', e.message);
+                        row.specialization = [row.specialization];
+                    }
+                } else if (!row.specialization) {
+                    row.specialization = [];
                 }
+
+                // Parse working_days dari JSON string ke array
                 if (row.working_days && typeof row.working_days === 'string') {
                     try {
                         row.working_days = JSON.parse(row.working_days);
-                    } catch (e) { }
+                        if (!Array.isArray(row.working_days)) {
+                            row.working_days = [row.working_days];
+                        }
+                    } catch (e) {
+                        console.log('Working days parse error:', e.message);
+                        row.working_days = [row.working_days];
+                    }
+                } else if (!row.working_days) {
+                    row.working_days = [];
                 }
+
+                // Parse recent_orders dari JSON string ke array
                 if (row.recent_orders && typeof row.recent_orders === 'string') {
                     try {
                         row.recent_orders = JSON.parse(row.recent_orders);
+                        if (!Array.isArray(row.recent_orders)) {
+                            row.recent_orders = [];
+                        }
                     } catch (e) {
+                        console.log('Recent orders parse error:', e.message);
                         row.recent_orders = [];
                     }
+                } else if (!row.recent_orders) {
+                    row.recent_orders = [];
                 }
+
+                // Konversi nilai ke tipe yang sesuai
+                row.total_orders = parseInt(row.total_orders) || 0;
+                row.avg_rating = parseFloat(row.avg_rating) || 0;
+                row.is_verified = parseInt(row.is_verified) || 0;
+                row.service_radius_km = parseInt(row.service_radius_km) || 10;
+
                 return row;
             });
 
+            // Hitung statistik berdasarkan data yang sudah difilter
+            const stats = {
+                total: registrations.length,
+                pending: registrations.filter(r => r.is_verified === 0).length,
+                verified: registrations.filter(r => r.is_verified === 1).length
+            };
+
+            // Kirim response
             res.json({
                 success: true,
+                message: 'Data mitra berhasil diambil',
                 data: registrations,
-                total: registrations.length,
-                filters: { status, search }
+                stats: stats,
+                filters: {
+                    status: status || 'all',
+                    search: search || ''
+                },
+                timestamp: new Date().toISOString()
             });
 
         } catch (error) {
             console.error('❌ Get All Mitra Registrations Error:', error);
-            res.status(500).json({
+
+            // Error handling yang lebih spesifik
+            let errorMessage = 'Terjadi kesalahan pada server';
+            let statusCode = 500;
+
+            if (error.code === 'ER_BAD_FIELD_ERROR') {
+                errorMessage = 'Terjadi kesalahan struktur database';
+            } else if (error.code === 'ER_PARSE_ERROR') {
+                errorMessage = 'Terjadi kesalahan sintaks SQL';
+            } else if (error.code === 'ER_NO_SUCH_TABLE') {
+                errorMessage = 'Tabel database tidak ditemukan';
+            }
+
+            res.status(statusCode).json({
                 success: false,
-                message: 'Terjadi kesalahan pada server',
-                error: process.env.NODE_ENV === 'development' ? error.message : undefined
+                message: errorMessage,
+                error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+                code: error.code
             });
         } finally {
             if (connection) connection.release();
