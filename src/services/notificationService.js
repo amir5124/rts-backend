@@ -114,6 +114,211 @@ class NotificationService {
         }
     }
 
+    // ========== NOTIFIKASI PESANAN UNTUK MITRA ==========
+
+    // Kirim notifikasi pesanan baru ke mitra (dari customer)
+    async sendNewOrderNotificationToMitra(mitraId, orderId, customerName, serviceName, orderCode = null) {
+        const notificationData = {
+            title: '📦 Pesanan Baru!',
+            message: `Halo, Anda mendapat pesanan baru dari ${customerName} untuk layanan ${serviceName}. Segera konfirmasi pesanan!`,
+            type: 'new_order_to_mitra'
+        };
+
+        const additionalData = {
+            screen: 'orders_mitra',
+            action: 'view_order',
+            order_id: orderId.toString(),
+            order_code: orderCode || `ORD-${orderId}`,
+            customer_name: customerName,
+            service_name: serviceName
+        };
+
+        const result = await this.sendToUser(mitraId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(mitraId, notificationData.title, notificationData.message, 'order');
+
+        console.log(`📢 New order notification sent to mitra ${mitraId} for order ${orderId}`);
+        return result;
+    }
+
+    // Kirim notifikasi pesanan baru ke customer (setelah order dibuat)
+    async sendOrderCreatedNotificationToCustomer(customerId, orderId, orderCode, totalAmount) {
+        const formattedAmount = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(totalAmount);
+        const notificationData = {
+            title: '🔄 Pesanan Diproses',
+            message: `Pesanan Anda (${orderCode}) dengan total ${formattedAmount} sedang diproses. Silakan selesaikan pembayaran.`,
+            type: 'order_created_to_customer'
+        };
+
+        const additionalData = {
+            screen: 'orders',
+            action: 'view_order',
+            order_id: orderId.toString(),
+            order_code: orderCode,
+            status: 'pending_payment'
+        };
+
+        const result = await this.sendToUser(customerId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(customerId, notificationData.title, notificationData.message, 'order');
+
+        console.log(`📢 Order created notification sent to customer ${customerId} for order ${orderId}`);
+        return result;
+    }
+
+    // Kirim notifikasi pesanan dikonfirmasi ke customer
+    async sendOrderConfirmedNotificationToCustomer(customerId, orderId, orderCode, mitraName) {
+        const notificationData = {
+            title: '✅ Pesanan Dikonfirmasi',
+            message: `Pesanan Anda (${orderCode}) telah dikonfirmasi oleh ${mitraName}. Mitra akan segera memproses pesanan Anda.`,
+            type: 'order_confirmed_to_customer'
+        };
+
+        const additionalData = {
+            screen: 'orders',
+            action: 'view_order',
+            order_id: orderId.toString(),
+            order_code: orderCode,
+            status: 'confirmed'
+        };
+
+        const result = await this.sendToUser(customerId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(customerId, notificationData.title, notificationData.message, 'order');
+
+        return result;
+    }
+
+    // Kirim notifikasi pesanan diproses ke customer
+    async sendOrderProcessingNotificationToCustomer(customerId, orderId, orderCode) {
+        const notificationData = {
+            title: '🔄 Pesanan Diproses',
+            message: `Pesanan Anda (${orderCode}) sedang diproses oleh mitra. Mohon tunggu ya.`,
+            type: 'order_processing_to_customer'
+        };
+
+        const additionalData = {
+            screen: 'orders',
+            action: 'view_order',
+            order_id: orderId.toString(),
+            order_code: orderCode,
+            status: 'processing'
+        };
+
+        const result = await this.sendToUser(customerId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(customerId, notificationData.title, notificationData.message, 'order');
+
+        return result;
+    }
+
+    // Kirim notifikasi pesanan selesai ke customer
+    async sendOrderCompletedNotificationToCustomer(customerId, orderId, orderCode, serviceName) {
+        const notificationData = {
+            title: '✅ Pesanan Selesai',
+            message: `Pesanan Anda untuk layanan ${serviceName} (${orderCode}) telah selesai. Silakan berikan rating dan ulasan ya!`,
+            type: 'order_completed_to_customer'
+        };
+
+        const additionalData = {
+            screen: 'orders',
+            action: 'rate_order',
+            order_id: orderId.toString(),
+            order_code: orderCode,
+            status: 'completed'
+        };
+
+        const result = await this.sendToUser(customerId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(customerId, notificationData.title, notificationData.message, 'order');
+
+        return result;
+    }
+
+    // Kirim notifikasi pesanan dibatalkan ke customer
+    async sendOrderCancelledNotificationToCustomer(customerId, orderId, orderCode, reason = null) {
+        const reasonText = reason ? ` Alasan: ${reason}` : '';
+        const notificationData = {
+            title: '❌ Pesanan Dibatalkan',
+            message: `Pesanan Anda (${orderCode}) telah dibatalkan.${reasonText} Dana akan dikembalikan ke saldo Anda.`,
+            type: 'order_cancelled_to_customer'
+        };
+
+        const additionalData = {
+            screen: 'orders',
+            action: 'refresh_orders',
+            order_id: orderId.toString(),
+            order_code: orderCode,
+            status: 'cancelled'
+        };
+
+        const result = await this.sendToUser(customerId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(customerId, notificationData.title, notificationData.message, 'order');
+
+        return result;
+    }
+
+    // ========== NOTIFIKASI PESANAN UNTUK MITRA (LEGACY) ==========
+
+    // Kirim notifikasi pesanan baru (untuk mitra) - alias dari sendNewOrderNotificationToMitra
+    async sendNewOrderNotification(userId, orderId, customerName, serviceName) {
+        return await this.sendNewOrderNotificationToMitra(userId, orderId, customerName, serviceName);
+    }
+
+    // Kirim notifikasi pesanan dibatalkan (untuk mitra)
+    async sendOrderCancelledNotification(userId, orderId, customerName, reason = null) {
+        const reasonText = reason ? ` Alasan: ${reason}` : '';
+        const notificationData = {
+            title: '❌ Pesanan Dibatalkan',
+            message: `Pesanan dari ${customerName} telah dibatalkan.${reasonText}`,
+            type: 'order_cancelled'
+        };
+
+        const additionalData = {
+            screen: 'orders_mitra',
+            action: 'refresh_orders',
+            order_id: orderId.toString(),
+            status: 'cancelled'
+        };
+
+        const result = await this.sendToUser(userId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'order');
+
+        return result;
+    }
+
+    // Kirim notifikasi pesanan selesai (untuk mitra)
+    async sendOrderCompletedNotification(userId, orderId, customerName) {
+        const notificationData = {
+            title: '✅ Pesanan Selesai',
+            message: `Pesanan untuk ${customerName} telah selesai. Jangan lupa minta rating ya!`,
+            type: 'order_completed'
+        };
+
+        const additionalData = {
+            screen: 'orders_mitra',
+            action: 'view_order',
+            order_id: orderId.toString(),
+            status: 'completed'
+        };
+
+        const result = await this.sendToUser(userId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'order');
+
+        return result;
+    }
+
     // ========== NOTIFIKASI VERIFIKASI ==========
 
     // Kirim notifikasi verifikasi akun mitra (APPROVE)
@@ -230,77 +435,6 @@ class NotificationService {
 
         // Simpan ke database notifications
         await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'account_reactivation');
-
-        return result;
-    }
-
-    // ========== NOTIFIKASI PESANAN ==========
-
-    // Kirim notifikasi pesanan baru
-    async sendNewOrderNotification(userId, orderId, customerName, serviceName) {
-        const notificationData = {
-            title: '📦 Pesanan Baru!',
-            message: `Halo, Anda mendapat pesanan baru dari ${customerName} untuk layanan ${serviceName}. Segera konfirmasi pesanan!`,
-            type: 'new_order'
-        };
-
-        const additionalData = {
-            screen: 'orders_mitra',
-            action: 'view_order',
-            order_id: orderId.toString()
-        };
-
-        const result = await this.sendToUser(userId, notificationData, additionalData);
-
-        // Simpan ke database notifications
-        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'order');
-
-        return result;
-    }
-
-    // Kirim notifikasi pesanan dibatalkan
-    async sendOrderCancelledNotification(userId, orderId, customerName, reason = null) {
-        const reasonText = reason ? ` Alasan: ${reason}` : '';
-        const notificationData = {
-            title: '❌ Pesanan Dibatalkan',
-            message: `Pesanan dari ${customerName} telah dibatalkan.${reasonText}`,
-            type: 'order_cancelled'
-        };
-
-        const additionalData = {
-            screen: 'orders_mitra',
-            action: 'refresh_orders',
-            order_id: orderId.toString(),
-            status: 'cancelled'
-        };
-
-        const result = await this.sendToUser(userId, notificationData, additionalData);
-
-        // Simpan ke database notifications
-        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'order');
-
-        return result;
-    }
-
-    // Kirim notifikasi pesanan selesai
-    async sendOrderCompletedNotification(userId, orderId, customerName) {
-        const notificationData = {
-            title: '✅ Pesanan Selesai',
-            message: `Pesanan untuk ${customerName} telah selesai. Jangan lupa minta rating ya!`,
-            type: 'order_completed'
-        };
-
-        const additionalData = {
-            screen: 'orders_mitra',
-            action: 'view_order',
-            order_id: orderId.toString(),
-            status: 'completed'
-        };
-
-        const result = await this.sendToUser(userId, notificationData, additionalData);
-
-        // Simpan ke database notifications
-        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'order');
 
         return result;
     }

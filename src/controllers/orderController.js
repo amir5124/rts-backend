@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const PaymentController = require('./paymentController');
+const notificationService = require('../services/notificationService');
 
 const OrderController = {
     // 1. CREATE ORDER
@@ -42,11 +43,26 @@ const OrderController = {
             const orderId = orderResult.insertId;
             console.log(`DB: Order disimpan (ID: ${orderId}).`);
 
+            // Get customer info for notification
             const [customerRows] = await connection.query(
-                "SELECT name, phone, email FROM users WHERE id = ? FOR UPDATE",
+                "SELECT name, phone, email FROM users WHERE id = ?",
                 [customer_id]
             );
             const customer = customerRows[0];
+
+            // Get service info for notification
+            const [serviceRows] = await connection.query(
+                "SELECT service_name FROM services WHERE id = ?",
+                [service_id]
+            );
+            const serviceName = serviceRows[0]?.service_name || 'Layanan';
+
+            // Get mitra info for notification
+            const [mitraRows] = await connection.query(
+                "SELECT name FROM users WHERE id = ?",
+                [mitra_id]
+            );
+            const mitraName = mitraRows[0]?.name || 'Mitra';
 
             if (!customer) throw new Error("Customer tidak ditemukan.");
 
@@ -63,10 +79,53 @@ const OrderController = {
             await connection.commit();
             console.log("DB: Transaksi BERHASIL di-commit.");
 
+            // ========== KIRIM NOTIFIKASI KE MITRA ==========
+            try {
+                console.log(`📢 Mengirim notifikasi pesanan baru ke mitra ID: ${mitra_id}`);
+
+                const notificationResult = await notificationService.sendNewOrderNotificationToMitra(
+                    mitra_id,
+                    orderId,
+                    customer.name,
+                    serviceName,
+                    orderCode
+                );
+
+                if (notificationResult.success) {
+                    console.log(`✅ Notifikasi pesanan baru berhasil dikirim ke mitra (${notificationResult.successCount} device)`);
+                } else {
+                    console.log(`⚠️ Gagal mengirim notifikasi ke mitra: ${notificationResult.message}`);
+                }
+            } catch (notifError) {
+                console.error('❌ Error sending notification to mitra:', notifError.message);
+            }
+
+            // ========== KIRIM NOTIFIKASI KE CUSTOMER ==========
+            try {
+                console.log(`📢 Mengirim notifikasi pesanan dibuat ke customer ID: ${customer_id}`);
+
+                const formattedAmount = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(order_info.total_bayar);
+
+                const customerNotificationResult = await notificationService.sendOrderCreatedNotificationToCustomer(
+                    customer_id,
+                    orderId,
+                    orderCode,
+                    order_info.total_bayar
+                );
+
+                if (customerNotificationResult.success) {
+                    console.log(`✅ Notifikasi pesanan dibuat berhasil dikirim ke customer`);
+                }
+            } catch (notifError) {
+                console.error('❌ Error sending notification to customer:', notifError.message);
+            }
+
             return res.json({
                 success: true,
                 order_code: orderCode,
-                payment_info: paymentResult
+                order_id: orderId,
+                payment_info: paymentResult,
+                notification_sent: true
             });
 
         } catch (error) {
@@ -88,7 +147,200 @@ const OrderController = {
         }
     },
 
-    // 2. GET ORDERS BY CUSTOMER (DENGAN DATA PAYMENT LENGKAP)
+    // 2. UPDATE ORDER STATUS (UNTUK MITRA & CUSTOMER)
+    updateOrderStatus: async (req, res) => {
+        let connection;
+        const { id } = req.params;
+        const { status, reason } = req.body;
+
+        const validStatuses = [
+            'pending_payment', 'pending', 'confirmed', 'paid',
+            'otw', 'ongoing', 'processing', 'completed', 'cancelled', 'released'
+        ];
+
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Status tidak valid. Status yang valid: ' + validStatuses.join(', ')
+            });
+        }
+
+        try {
+            connection = await db.getConnection();
+            await connection.beginTransaction();
+
+            // Get order details before update
+            const [orderRows] = await connection.query(
+                `SELECT o.*, 
+                        u.name as customer_name, u.email as customer_email, u.phone as customer_phone,
+                        m.name as mitra_name, m.email as mitra_email, m.phone as mitra_phone,
+                        s.service_name
+                 FROM orders o
+                 JOIN users u ON o.customer_id = u.id
+                 LEFT JOIN users m ON o.mitra_id = m.id
+                 LEFT JOIN services s ON o.service_id = s.id
+                 WHERE o.id = ?`,
+                [id]
+            );
+
+            if (orderRows.length === 0) {
+                await connection.rollback();
+                return res.status(404).json({ success: false, message: 'Order tidak ditemukan' });
+            }
+
+            const order = orderRows[0];
+            const oldStatus = order.status;
+
+            // Update order status
+            await connection.query(
+                'UPDATE orders SET status = ? WHERE id = ?',
+                [status, id]
+            );
+
+            // Update timestamps based on status
+            if (status === 'confirmed' && oldStatus !== 'confirmed') {
+                await connection.query(
+                    'UPDATE orders SET confirmed_at_mitra = NOW() WHERE id = ?',
+                    [id]
+                );
+            }
+
+            if (status === 'completed') {
+                await connection.query(
+                    'UPDATE orders SET completed_at = NOW() WHERE id = ?',
+                    [id]
+                );
+                // Update payment status jika order selesai
+                await connection.query(
+                    'UPDATE payments SET status = ?, paid_at = NOW() WHERE order_id = ? AND status != "SUCCESS"',
+                    ['SUCCESS', id]
+                );
+            }
+
+            if (status === 'cancelled') {
+                await connection.query(
+                    'UPDATE payments SET status = ?, updated_at = NOW() WHERE order_id = ?',
+                    ['CANCELLED', id]
+                );
+            }
+
+            await connection.commit();
+            console.log(`✅ Order ${id} status updated from ${oldStatus} to ${status}`);
+
+            // ========== KIRIM NOTIFIKASI BERDASARKAN PERUBAHAN STATUS ==========
+
+            // 1. Notifikasi ke customer: pesanan dikonfirmasi oleh mitra
+            if (status === 'confirmed' && oldStatus !== 'confirmed') {
+                try {
+                    await notificationService.sendOrderConfirmedNotificationToCustomer(
+                        order.customer_id,
+                        id,
+                        order.order_code,
+                        order.mitra_name || 'Mitra'
+                    );
+                    console.log(`✅ Confirmation notification sent to customer ${order.customer_id}`);
+                } catch (err) {
+                    console.error('Error sending confirmation notification:', err.message);
+                }
+            }
+
+            // 2. Notifikasi ke customer: pesanan sedang diproses
+            if (status === 'processing' && oldStatus !== 'processing') {
+                try {
+                    await notificationService.sendOrderProcessingNotificationToCustomer(
+                        order.customer_id,
+                        id,
+                        order.order_code
+                    );
+                    console.log(`✅ Processing notification sent to customer ${order.customer_id}`);
+                } catch (err) {
+                    console.error('Error sending processing notification:', err.message);
+                }
+            }
+
+            // 3. Notifikasi ke customer: pesanan selesai
+            if (status === 'completed' && oldStatus !== 'completed') {
+                try {
+                    await notificationService.sendOrderCompletedNotificationToCustomer(
+                        order.customer_id,
+                        id,
+                        order.order_code,
+                        order.service_name || 'Layanan'
+                    );
+                    console.log(`✅ Completion notification sent to customer ${order.customer_id}`);
+                } catch (err) {
+                    console.error('Error sending completion notification:', err.message);
+                }
+            }
+
+            // 4. Notifikasi ke customer: pesanan dibatalkan
+            if (status === 'cancelled' && oldStatus !== 'cancelled') {
+                try {
+                    await notificationService.sendOrderCancelledNotificationToCustomer(
+                        order.customer_id,
+                        id,
+                        order.order_code,
+                        reason || null
+                    );
+                    console.log(`✅ Cancellation notification sent to customer ${order.customer_id}`);
+                } catch (err) {
+                    console.error('Error sending cancellation notification:', err.message);
+                }
+            }
+
+            // 5. Notifikasi ke mitra: pesanan dibatalkan oleh customer
+            if (status === 'cancelled' && order.mitra_id) {
+                try {
+                    const cancelReason = reason || 'Tidak ada alasan';
+                    await notificationService.sendOrderCancelledNotification(
+                        order.mitra_id,
+                        id,
+                        order.customer_name,
+                        cancelReason
+                    );
+                    console.log(`✅ Cancellation notification sent to mitra ${order.mitra_id}`);
+                } catch (err) {
+                    console.error('Error sending cancellation to mitra:', err.message);
+                }
+            }
+
+            // 6. Notifikasi ke mitra: pesanan selesai
+            if (status === 'completed' && order.mitra_id) {
+                try {
+                    await notificationService.sendOrderCompletedNotification(
+                        order.mitra_id,
+                        id,
+                        order.customer_name
+                    );
+                    console.log(`✅ Completion notification sent to mitra ${order.mitra_id}`);
+                } catch (err) {
+                    console.error('Error sending completion to mitra:', err.message);
+                }
+            }
+
+            return res.json({
+                success: true,
+                message: `Status order berhasil diubah menjadi ${status}`,
+                data: {
+                    id: parseInt(id),
+                    status: status,
+                    old_status: oldStatus
+                }
+            });
+
+        } catch (error) {
+            if (connection) await connection.rollback();
+            console.error('Error updating order status:', error);
+            return res.status(500).json({
+                success: false,
+                message: error.message
+            });
+        } finally {
+            if (connection) connection.release();
+        }
+    },
+
+    // 3. GET ORDERS BY CUSTOMER
     getOrdersByCustomer: async (req, res) => {
         let connection;
         const { customer_id } = req.params;
@@ -246,7 +498,7 @@ const OrderController = {
         }
     },
 
-    // 3. GET ORDER BY ID (DENGAN DATA PAYMENT LENGKAP)
+    // 4. GET ORDER BY ID
     getOrderById: async (req, res) => {
         let connection;
         const { id } = req.params;
@@ -299,7 +551,6 @@ const OrderController = {
 
             const order = orders[0];
 
-            // Format payment details
             let paymentDetails = null;
             if (order.payment_id || order.partner_reff) {
                 paymentDetails = {
@@ -326,7 +577,6 @@ const OrderController = {
                 }
             }
 
-            // Get mitra rating
             let mitraRating = 0;
             if (order.mitra_id) {
                 const [ratingResult] = await connection.query(
@@ -336,7 +586,6 @@ const OrderController = {
                 mitraRating = parseFloat(ratingResult[0]?.avg_rating) || 0;
             }
 
-            // Format response
             const formattedOrder = {
                 id: order.id,
                 order_code: order.order_code,
@@ -398,7 +647,7 @@ const OrderController = {
         }
     },
 
-    // 4. CANCEL ORDER
+    // 5. CANCEL ORDER (BY CUSTOMER)
     cancelOrder: async (req, res) => {
         let connection;
         const { id } = req.params;
@@ -408,12 +657,16 @@ const OrderController = {
             connection = await db.getConnection();
             await connection.beginTransaction();
 
-            const [order] = await connection.query(
-                'SELECT status FROM orders WHERE id = ?',
+            const [orderRows] = await connection.query(
+                `SELECT o.*, u.name as customer_name, m.name as mitra_name 
+                 FROM orders o
+                 LEFT JOIN users u ON o.customer_id = u.id
+                 LEFT JOIN users m ON o.mitra_id = m.id
+                 WHERE o.id = ?`,
                 [id]
             );
 
-            if (order.length === 0) {
+            if (orderRows.length === 0) {
                 await connection.rollback();
                 return res.status(404).json({
                     success: false,
@@ -421,12 +674,14 @@ const OrderController = {
                 });
             }
 
-            const allowedStatus = ['pending_payment'];
-            if (!allowedStatus.includes(order[0].status)) {
+            const order = orderRows[0];
+            const allowedStatus = ['pending_payment', 'pending'];
+
+            if (!allowedStatus.includes(order.status)) {
                 await connection.rollback();
                 return res.status(400).json({
                     success: false,
-                    message: `Order dengan status ${order[0].status} tidak dapat dibatalkan`
+                    message: `Order dengan status ${order.status} tidak dapat dibatalkan`
                 });
             }
 
@@ -435,18 +690,33 @@ const OrderController = {
                 ['cancelled', id]
             );
 
-            // Update payment status if exists
             await connection.query(
                 'UPDATE payments SET status = ? WHERE order_id = ?',
-                ['FAILED', id]
+                ['CANCELLED', id]
             );
 
             await connection.commit();
+
+            // Kirim notifikasi ke mitra jika ada
+            if (order.mitra_id) {
+                try {
+                    await notificationService.sendOrderCancelledNotification(
+                        order.mitra_id,
+                        id,
+                        order.customer_name,
+                        reason || 'Dibatalkan oleh customer'
+                    );
+                    console.log(`✅ Cancellation notification sent to mitra ${order.mitra_id}`);
+                } catch (err) {
+                    console.error('Error sending cancellation to mitra:', err.message);
+                }
+            }
 
             return res.json({
                 success: true,
                 message: 'Order berhasil dibatalkan'
             });
+
         } catch (error) {
             if (connection) await connection.rollback();
             console.error('Error in cancelOrder:', error);
@@ -459,7 +729,7 @@ const OrderController = {
         }
     },
 
-    // 5. GET ALL ORDERS (ADMIN ONLY) - DENGAN DATA PAYMENT
+    // 6. GET ALL ORDERS (ADMIN ONLY)
     getAllOrders: async (req, res) => {
         let connection;
         const { page = 1, limit = 10, status } = req.query;
@@ -490,11 +760,9 @@ const OrderController = {
                 queryParams.push(status);
             }
 
-            // Get total count
             const [countResult] = await connection.query(countQuery, queryParams);
             const total = countResult[0].total;
 
-            // Get paginated orders
             dataQuery += ` ORDER BY o.created_at DESC LIMIT ? OFFSET ?`;
             queryParams.push(parseInt(limit), offset);
 
@@ -523,14 +791,13 @@ const OrderController = {
         }
     },
 
-    // 6. GET ORDER STATISTICS (ADMIN ONLY) - DENGAN DATA PAYMENT
+    // 7. GET ORDER STATISTICS (ADMIN ONLY)
     getOrderStatistics: async (req, res) => {
         let connection;
 
         try {
             connection = await db.getConnection();
 
-            // Overview statistics
             const [overview] = await connection.query(`
                 SELECT 
                     COUNT(DISTINCT o.id) as total_orders,
@@ -542,7 +809,6 @@ const OrderController = {
                 LEFT JOIN payments p ON o.id = p.order_id
             `);
 
-            // Status breakdown for orders
             const [byStatus] = await connection.query(`
                 SELECT 
                     o.status,
@@ -553,7 +819,6 @@ const OrderController = {
                 ORDER BY total DESC
             `);
 
-            // Payment status breakdown
             const [byPaymentStatus] = await connection.query(`
                 SELECT 
                     p.status,
@@ -564,7 +829,6 @@ const OrderController = {
                 ORDER BY total DESC
             `);
 
-            // Monthly statistics (last 12 months)
             const [monthly] = await connection.query(`
                 SELECT 
                     DATE_FORMAT(o.created_at, '%Y-%m') as month,
@@ -599,74 +863,7 @@ const OrderController = {
         }
     },
 
-    // 7. UPDATE ORDER STATUS (ADMIN ONLY)
-    updateOrderStatus: async (req, res) => {
-        let connection;
-        const { id } = req.params;
-        const { status } = req.body;
-
-        const validStatuses = [
-            'pending_payment', 'pending', 'paid', 'otw',
-            'ongoing', 'completed', 'cancelled', 'released'
-        ];
-
-        if (!validStatuses.includes(status)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Status tidak valid. Status yang valid: ' + validStatuses.join(', ')
-            });
-        }
-
-        try {
-            connection = await db.getConnection();
-            await connection.beginTransaction();
-
-            const [order] = await connection.query(
-                'SELECT status FROM orders WHERE id = ?',
-                [id]
-            );
-
-            if (order.length === 0) {
-                await connection.rollback();
-                return res.status(404).json({
-                    success: false,
-                    message: 'Order tidak ditemukan'
-                });
-            }
-
-            await connection.query(
-                'UPDATE orders SET status = ? WHERE id = ?',
-                [status, id]
-            );
-
-            // Update payment status jika order status berubah menjadi completed
-            if (status === 'completed') {
-                await connection.query(
-                    'UPDATE payments SET status = ? WHERE order_id = ? AND status != "SUCCESS"',
-                    ['SUCCESS', id]
-                );
-            }
-
-            await connection.commit();
-
-            return res.json({
-                success: true,
-                message: `Status order berhasil diubah menjadi ${status}`,
-                data: { id, status }
-            });
-        } catch (error) {
-            if (connection) await connection.rollback();
-            console.error('Error in updateOrderStatus:', error);
-            return res.status(500).json({
-                success: false,
-                message: error.message
-            });
-        } finally {
-            if (connection) connection.release();
-        }
-    },
-
-    // 8. GET ORDERS BY MITRA (DENGAN DATA PAYMENT LENGKAP)
+    // 8. GET ORDERS BY MITRA
     getOrdersByMitra: async (req, res) => {
         let connection;
         const { mitra_id } = req.params;
@@ -749,6 +946,72 @@ const OrderController = {
 
         } catch (error) {
             console.error('Error in getOrdersByMitra:', error);
+            return res.status(500).json({
+                success: false,
+                message: error.message
+            });
+        } finally {
+            if (connection) connection.release();
+        }
+    },
+
+    // 9. UPDATE ORDER STATUS (ADMIN ONLY) - Legacy/Alternative
+    updateOrderStatusAdmin: async (req, res) => {
+        let connection;
+        const { id } = req.params;
+        const { status } = req.body;
+
+        const validStatuses = [
+            'pending_payment', 'pending', 'paid', 'otw',
+            'ongoing', 'completed', 'cancelled', 'released'
+        ];
+
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Status tidak valid. Status yang valid: ' + validStatuses.join(', ')
+            });
+        }
+
+        try {
+            connection = await db.getConnection();
+            await connection.beginTransaction();
+
+            const [order] = await connection.query(
+                'SELECT status FROM orders WHERE id = ?',
+                [id]
+            );
+
+            if (order.length === 0) {
+                await connection.rollback();
+                return res.status(404).json({
+                    success: false,
+                    message: 'Order tidak ditemukan'
+                });
+            }
+
+            await connection.query(
+                'UPDATE orders SET status = ? WHERE id = ?',
+                [status, id]
+            );
+
+            if (status === 'completed') {
+                await connection.query(
+                    'UPDATE payments SET status = ? WHERE order_id = ? AND status != "SUCCESS"',
+                    ['SUCCESS', id]
+                );
+            }
+
+            await connection.commit();
+
+            return res.json({
+                success: true,
+                message: `Status order berhasil diubah menjadi ${status}`,
+                data: { id: parseInt(id), status: status }
+            });
+        } catch (error) {
+            if (connection) await connection.rollback();
+            console.error('Error in updateOrderStatusAdmin:', error);
             return res.status(500).json({
                 success: false,
                 message: error.message
