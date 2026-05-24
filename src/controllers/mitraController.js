@@ -1132,11 +1132,11 @@ const mitraController = {
                 });
             }
 
-            // Hapus data terkait (soft delete atau hard delete)
             // Soft delete: update status
+            // Gunakan 'customer' karena itu adalah role default untuk non-mitra
             await connection.query(
-                'UPDATE users SET is_active = 0, role = "user" WHERE id = ?',
-                [user_id]
+                'UPDATE users SET is_active = 0, role = ? WHERE id = ?',
+                ['customer', user_id]  // ← Ganti dari 'user' menjadi 'customer'
             );
 
             await connection.query(
@@ -1148,7 +1148,12 @@ const mitraController = {
 
             res.json({
                 success: true,
-                message: 'Mitra berhasil dinonaktifkan'
+                message: 'Mitra berhasil dinonaktifkan',
+                data: {
+                    user_id: user_id,
+                    new_role: 'customer',
+                    is_active: false
+                }
             });
 
         } catch (error) {
@@ -1162,7 +1167,6 @@ const mitraController = {
             if (connection) connection.release();
         }
     },
-
     // Dashboard mitra
     getDashboard: async (req, res) => {
         let connection;
