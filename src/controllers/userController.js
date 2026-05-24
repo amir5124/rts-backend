@@ -59,6 +59,7 @@ const userController = {
         try {
             const id = req.params.id;
             const currentUser = await User.findById(id);
+
             if (!currentUser) {
                 return res.status(404).json({
                     success: false,
@@ -72,10 +73,11 @@ const userController = {
             if (req.file) {
                 profilePicPath = req.file.filename;
 
-                // Hapus foto lama dari storage agar tidak menumpuk
-                const oldPath = path.join(__dirname, '../../uploads', currentUser.profile_pic);
-                if (currentUser.profile_pic && fs.existsSync(oldPath)) {
-                    fs.unlinkSync(oldPath);
+                // ✅ OPSI 2: Tidak menghapus file lama, hanya mengganti path di database
+                // File lama akan tetap tersimpan di server (tidak masalah untuk storage kecil)
+                console.log(`✅ New profile picture uploaded: ${req.file.filename}`);
+                if (currentUser.profile_pic) {
+                    console.log(`ℹ️ Old profile picture: ${currentUser.profile_pic} (kept as backup)`);
                 }
             }
 
@@ -87,11 +89,25 @@ const userController = {
             };
 
             await User.update(id, data);
+
+            // Return full URL untuk frontend
+            const baseUrl = `${req.protocol}://${req.get('host')}`;
+            const profilePicUrl = data.profile_pic
+                ? `${baseUrl}/uploads/profiles/${data.profile_pic}`
+                : null;
+
             res.json({
                 success: true,
                 message: "Profile berhasil diperbarui",
-                data: data
+                data: {
+                    id: parseInt(id),
+                    name: data.name,
+                    email: data.email,
+                    phone: data.phone,
+                    profile_pic: profilePicUrl
+                }
             });
+
         } catch (err) {
             console.error('Error in updateUser:', err);
             res.status(500).json({
