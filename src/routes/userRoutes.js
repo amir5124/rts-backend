@@ -2,14 +2,21 @@ const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
 const upload = require('../middlewares/uploadMiddleware');
-const { verifyToken } = require('../middlewares/auth');
+const { verifyToken, isAdmin } = require('../middlewares/auth');
 
 /**
  * @route   GET /api/users
  * @desc    Ambil semua data user
- * @access  Private
+ * @access  Private (Admin only)
  */
-router.get('/', verifyToken, userController.getUsers);
+router.get('/', userController.getUsers);
+
+/**
+ * @route   GET /api/users/statistics
+ * @desc    Ambil statistik user
+ * @access  Private (Admin only)
+ */
+router.get('/statistics', userController.getUserStatistics);
 
 /**
  * @route   GET /api/users/:id
@@ -26,9 +33,16 @@ router.get('/:id', verifyToken, userController.getUserById);
 router.put(
     '/:id',
     verifyToken,
-    upload.single('profile_pic'), // Middleware untuk handle upload satu file
+    upload.single('profile_pic'),
     userController.updateUser
 );
+
+/**
+ * @route   PUT /api/users/:id/status
+ * @desc    Update status aktif/nonaktif user
+ * @access  Private (Admin only)
+ */
+router.put('/:id/status', userController.updateUserStatus);
 
 /**
  * @route   PUT /api/users/:id/change-password
@@ -40,8 +54,8 @@ router.put('/:id/change-password', verifyToken, userController.changePassword);
 /**
  * @route   DELETE /api/users/:id
  * @desc    Hapus user dan file foto terkait
- * @access  Private
+ * @access  Private (Admin only)
  */
-router.delete('/:id', verifyToken, userController.deleteUser);
+router.delete('/:id', userController.deleteUser);
 
 module.exports = router;
