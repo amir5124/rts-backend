@@ -185,32 +185,68 @@ const LinkQuUtility = {
         return await LinkQuUtility.hitLinkQu(endpoint, finalBody);
     },
 
+    // utils/linkqu.js - Tambahkan/Update fungsi checkStatus
+
     /**
-     * 🔥 PERBAIKAN: Check Status Pembayaran
-     * Endpoint untuk mengecek status transaksi
+     * 🔥 PERBAIKAN: Check Status Pembayaran (Menggunakan GET method)
+     * Mengikuti pola yang berhasil di project lain
      */
-    checkStatus: async (partner_reff) => {
-        const endpoint = '/transaction/status';
+    checkStatus: async (partnerReff) => {
+        try {
+            console.log(`[LinkQu] 🔍 Checking status for reff: ${partnerReff}`);
+
+            const response = await axios.get(`${config.baseUrl}/transaction/payment/checkstatus`, {
+                params: {
+                    username: config.username,
+                    partnerreff: partnerReff
+                },
+                headers: {
+                    'client-id': config.clientId,
+                    'client-secret': config.clientSecret,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 15000
+            });
+
+            console.log(`[LinkQu] ✅ Status check response:`, response.data);
+            logToFile(`STATUS CHECK ${partnerReff}`, response.data);
+
+            return response.data;
+
+        } catch (error) {
+            const errorData = error.response?.data || error.message;
+            console.error(`[LinkQu] ❌ Status check error for ${partnerReff}:`, errorData);
+            logToFile(`STATUS CHECK ERROR ${partnerReff}`, errorData);
+
+            // Return default response agar tidak crash
+            return {
+                status: 'PENDING',
+                response_code: '500',
+                response_desc: error.response?.data?.message || error.message || 'Gagal mengecek status'
+            };
+        }
+    },
+
+    /**
+     * 🔥 TAMBAHAN: Inquiry transaksi dengan POST (alternatif)
+     */
+    inquiryTransaction: async (partnerReff) => {
+        const endpoint = '/transaction/inquiry';
         const method = 'POST';
 
         try {
-            console.log(`[LinkQu] 🔍 Checking status for reff: ${partner_reff}`);
-
-            // Data untuk signature
             const signatureData = {
-                partner_reff: String(partner_reff)
+                partner_reff: String(partnerReff)
             };
 
             const signature = generateSignature(endpoint, method, signatureData);
 
             const payload = {
-                partner_reff: String(partner_reff),
+                partner_reff: String(partnerReff),
                 username: config.username,
                 pin: config.pin,
                 signature: signature
             };
-
-            console.log(`[LinkQu] 📦 Status check payload:`, payload);
 
             const response = await axios.post(`${config.baseUrl}${endpoint}`, payload, {
                 headers: {
@@ -221,22 +257,11 @@ const LinkQuUtility = {
                 timeout: 15000
             });
 
-            console.log(`[LinkQu] ✅ Status check response:`, response.data);
-            logToFile(`STATUS CHECK ${partner_reff}`, response.data);
-
             return response.data;
 
         } catch (error) {
-            const errorData = error.response?.data || error.message;
-            console.error(`[LinkQu] ❌ Status check error for ${partner_reff}:`, errorData);
-            logToFile(`STATUS CHECK ERROR ${partner_reff}`, errorData);
-
-            // Return default response agar tidak crash
-            return {
-                status: 'ERROR',
-                response_code: '500',
-                response_desc: error.message || 'Gagal mengecek status'
-            };
+            console.error(`[LinkQu] ❌ Inquiry error:`, error.message);
+            return null;
         }
     },
 

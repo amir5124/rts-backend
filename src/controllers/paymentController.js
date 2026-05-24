@@ -206,11 +206,14 @@ const PaymentController = {
         }
     },
 
+    // controllers/PaymentController.js - Update fungsi checkStatus
+
     /**
      * CHECK STATUS (POLLING DARI FRONTEND)
+     * 🔥 PERBAIKAN: Menggunakan GET method seperti project lain
      */
     checkStatus: async (req, res) => {
-        const { reff } = req.params;
+        let { reff } = req.params;
 
         if (!reff) {
             return res.status(400).json({
@@ -219,16 +222,34 @@ const PaymentController = {
             });
         }
 
+        // 🔥 Format partner_reff - jika hanya ORD-xxx, konversi ke format yang benar
+        let partnerReff = reff;
+
+        // Cek di database untuk mendapatkan partner_reff yang benar
         try {
-            console.log(`🔍 [POLLING] Checking status for Reff: ${reff}`);
+            const [rows] = await db.query(
+                `SELECT partner_reff FROM payments WHERE partner_reff LIKE ? OR partner_reff LIKE ?`,
+                [`%${reff}%`, `%${reff.replace('ORD-', 'PAY-ORD-')}%`]
+            );
+
+            if (rows.length > 0 && rows[0].partner_reff) {
+                partnerReff = rows[0].partner_reff;
+                console.log(`📝 Found correct partner_reff in DB: ${partnerReff}`);
+            }
+        } catch (err) {
+            console.log('Error searching partner_reff in DB:', err.message);
+        }
+
+        try {
+            console.log(`🔍 [POLLING] Checking status for Reff: ${reff} -> partnerReff: ${partnerReff}`);
 
             // 1. Cek Database Lokal Terlebih Dahulu
             const [rows] = await db.query(
-                `SELECT p.status as payment_status, o.status as order_status, p.order_id 
-                 FROM payments p
-                 LEFT JOIN orders o ON p.order_id = o.id
-                 WHERE p.partner_reff = ?`,
-                [reff]
+                `SELECT p.status as payment_status, o.status as order_status, p.order_id, p.partner_reff
+             FROM payments p
+             LEFT JOIN orders o ON p.order_id = o.id
+             WHERE p.partner_reff = ?`,
+                [partnerReff]
             );
 
             // Jika di DB sudah SUCCESS, langsung return
@@ -246,25 +267,26 @@ const PaymentController = {
                 }
             }
 
-            // 2. Cek ke Vendor LinkQu
+            // 2. Cek ke Vendor LinkQu (menggunakan GET method)
             let vendorResult = null;
             let vendorSuccess = false;
 
             try {
-                // Panggil fungsi checkStatus yang sudah kita buat di linkqu.js
                 if (typeof LinkQu.checkStatus === 'function') {
-                    vendorResult = await LinkQu.checkStatus(reff);
+                    vendorResult = await LinkQu.checkStatus(partnerReff);
                     console.log(`[LinkQu] Status check result:`, vendorResult);
 
-                    // Parse hasil dari LinkQu
+                    // Parse hasil dari LinkQu (sesuai response format)
                     const responseCode = vendorResult?.response_code || vendorResult?.code || '';
                     const vendorStatus = vendorResult?.status || vendorResult?.transaction_status || '';
+                    const isSuccessResponse = vendorResult?.success === true;
 
                     vendorSuccess = responseCode === '00' ||
                         responseCode === '200' ||
                         vendorStatus === 'SUCCESS' ||
                         vendorStatus === 'SETTLED' ||
-                        vendorStatus === 'PAID';
+                        vendorStatus === 'PAID' ||
+                        isSuccessResponse;
                 } else {
                     console.warn('⚠️ LinkQu.checkStatus not available');
                     vendorResult = { status: 'PENDING', response_desc: 'Check status tidak tersedia' };
@@ -276,11 +298,11 @@ const PaymentController = {
 
             // 3. Jika SUCCESS dari Vendor, Update Database
             if (vendorSuccess && rows.length > 0) {
-                console.log(`✅ [POLLING] Payment SUCCESS for reff: ${reff}, updating DB...`);
+                console.log(`✅ [POLLING] Payment SUCCESS for reff: ${partnerReff}, updating DB...`);
 
                 await db.query(
                     `UPDATE payments SET status = 'SUCCESS', updated_at = NOW() WHERE partner_reff = ?`,
-                    [reff]
+                    [partnerReff]
                 );
 
                 if (rows[0].order_id) {
@@ -297,23 +319,7 @@ const PaymentController = {
                 });
             }
 
-            // 4. Masih PENDING atau ERROR
-            const isError = vendorResult?.status === 'ERROR' || vendorResult?.response_code === '500';
-
-            if (isError && rows.length > 0 && rows[0].payment_status === 'PENDING') {
-                // Update status jadi FAILED jika perlu
-                await db.query(
-                    `UPDATE payments SET status = 'FAILED', updated_at = NOW() WHERE partner_reff = ?`,
-                    [reff]
-                );
-
-                return res.json({
-                    status: 'FAILED',
-                    message: vendorResult?.response_desc || 'Pembayaran gagal',
-                    data: vendorResult
-                });
-            }
-
+            // 4. Masih PENDING
             return res.json({
                 status: 'PENDING',
                 message: vendorResult?.response_desc || 'Menunggu pembayaran',
