@@ -4,11 +4,22 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
 const dotenv = require('dotenv');
+const fs = require('fs'); // TAMBAHKAN: Untuk membuat folder
 
 // 1. Load environment variables paling awal
 dotenv.config();
 
 const app = express();
+
+// --- TAMBAHAN: Auto-create folders untuk uploads ---
+const uploadDirs = ['uploads', 'uploads/profiles', 'uploads/certificates'];
+uploadDirs.forEach(dir => {
+    const fullPath = path.join(__dirname, dir);
+    if (!fs.existsSync(fullPath)) {
+        fs.mkdirSync(fullPath, { recursive: true });
+        console.log(`📁 Created directory: ${dir}`);
+    }
+});
 
 // --- MIDDLEWARE KEAMANAN & KONFIGURASI ---
 

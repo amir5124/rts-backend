@@ -1,6 +1,8 @@
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
 const notificationService = require('../services/notificationService');
+const fs = require('fs');
+const path = require('path');
 
 const mitraController = {
 
@@ -12,7 +14,7 @@ const mitraController = {
             const {
                 user_id,
                 specialization,
-                certificate_url,
+                certificate_url, // ini bisa berupa base64 string atau URL
                 address,
                 address_latitude,
                 address_longitude,
@@ -61,6 +63,63 @@ const mitraController = {
                 });
             }
 
+            // Proses certificate_url jika berupa base64
+            let finalCertificateUrl = null;
+
+            if (certificate_url) {
+                // Cek apakah certificate_url adalah base64 string
+                const isBase64 = certificate_url.startsWith('data:image') ||
+                    certificate_url.startsWith('data:application/pdf') ||
+                    /^[A-Za-z0-9+/=]+$/.test(certificate_url.substring(0, 100));
+
+                if (isBase64 && (certificate_url.includes('base64') || certificate_url.length > 500)) {
+                    try {
+                        // Buat folder certificates jika belum ada
+                        const uploadDir = path.join(__dirname, '../../uploads/certificates');
+                        if (!fs.existsSync(uploadDir)) {
+                            fs.mkdirSync(uploadDir, { recursive: true });
+                        }
+
+                        // Extract base64 data
+                        let base64Data = certificate_url;
+                        let fileExtension = 'jpg';
+
+                        if (certificate_url.startsWith('data:image')) {
+                            // Format: data:image/jpeg;base64,xxxxx
+                            const matches = certificate_url.match(/^data:image\/(\w+);base64,/);
+                            if (matches && matches[1]) {
+                                fileExtension = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+                            }
+                            base64Data = certificate_url.replace(/^data:image\/\w+;base64,/, '');
+                        } else if (certificate_url.startsWith('data:application/pdf')) {
+                            fileExtension = 'pdf';
+                            base64Data = certificate_url.replace(/^data:application\/pdf;base64,/, '');
+                        } else if (certificate_url.includes('base64,')) {
+                            base64Data = certificate_url.split('base64,')[1];
+                        }
+
+                        // Generate filename
+                        const filename = `cert_${user_id}_${Date.now()}.${fileExtension}`;
+                        const filepath = path.join(uploadDir, filename);
+
+                        // Save file
+                        fs.writeFileSync(filepath, base64Data, 'base64');
+
+                        // Set URL untuk disimpan di database (relative path)
+                        finalCertificateUrl = `/uploads/certificates/${filename}`;
+
+                        console.log(`✅ Certificate saved: ${finalCertificateUrl}`);
+                    } catch (fileError) {
+                        console.error('❌ Error saving certificate file:', fileError);
+                        // Jika gagal menyimpan file, simpan URL asli saja
+                        finalCertificateUrl = certificate_url;
+                    }
+                } else {
+                    // Jika bukan base64, langsung gunakan sebagai URL
+                    finalCertificateUrl = certificate_url;
+                }
+            }
+
             let specializationValue = specialization;
             if (Array.isArray(specialization)) {
                 specializationValue = JSON.stringify(specialization);
@@ -84,7 +143,7 @@ const mitraController = {
             await connection.query(mitraQuery, [
                 user_id,
                 specializationValue,
-                certificate_url || null,
+                finalCertificateUrl, // Gunakan URL file yang sudah disimpan
                 address,
                 address_latitude || null,
                 address_longitude || null,
@@ -105,6 +164,7 @@ const mitraController = {
                 data: {
                     user_id: user_id,
                     specialization: specialization,
+                    certificate_url: finalCertificateUrl,
                     is_verified: false,
                     is_online: false
                 }
@@ -123,13 +183,13 @@ const mitraController = {
 
             res.status(500).json({
                 success: false,
-                message: 'Terjadi kesalahan pada server'
+                message: 'Terjadi kesalahan pada server',
+                error: process.env.NODE_ENV === 'development' ? error.message : undefined
             });
         } finally {
             if (connection) connection.release();
         }
     },
-
     // Check status registrasi mitra
     checkMitraStatus: async (req, res) => {
         let connection;
