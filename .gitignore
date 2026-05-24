@@ -1,1 +1,11 @@
 node_modules/
+# Firebase Admin SDK
+config/firebase/firebase-adminsdk.json
+**/firebase-adminsdk.json
+*.key.json
+service-account*.json
+
+# Environment
+.env
+.env.local
+.env.production

@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const bcrypt = require('bcrypt'); // Jangan lupa install: npm install bcrypt
+const notificationService = require('../services/notificationService');
 
 const mitraController = {
 
@@ -725,19 +726,21 @@ const mitraController = {
         }
     },
 
-    // Approve mitra registration (Admin only)
     approveMitra: async (req, res) => {
         let connection;
         const { user_id } = req.params;
-        const { is_verified } = req.body; // true/false
+        const { is_verified, rejection_reason } = req.body; // tambah rejection_reason
 
         try {
             connection = await db.getConnection();
             await connection.beginTransaction();
 
-            // Cek apakah mitra exists
+            // Cek apakah mitra exists dan ambil data user
             const [mitraCheck] = await connection.query(
-                'SELECT id, is_verified FROM mitra_details WHERE user_id = ?',
+                `SELECT md.id, md.is_verified, u.name 
+                 FROM mitra_details md 
+                 JOIN users u ON md.user_id = u.id 
+                 WHERE md.user_id = ?`,
                 [user_id]
             );
 
@@ -749,29 +752,63 @@ const mitraController = {
                 });
             }
 
+            const mitraName = mitraCheck[0].name || 'Mitra';
+
             // Update status verifikasi
             await connection.query(
                 'UPDATE mitra_details SET is_verified = ? WHERE user_id = ?',
                 [is_verified ? 1 : 0, user_id]
             );
 
-            // Jika diverifikasi, tambahkan notifikasi
+            // Insert notifikasi ke database
             if (is_verified) {
+                // Notifikasi APPROVE
                 await connection.query(
                     `INSERT INTO notifications (user_id, title, message, type, is_read) 
-                 VALUES (?, ?, ?, ?, 0)`,
-                    [user_id, 'Akun Diverifikasi',
+                     VALUES (?, ?, ?, ?, 0)`,
+                    [user_id,
+                        '✅ Akun Diverifikasi',
                         'Selamat! Akun mitra Anda telah diverifikasi. Anda sekarang dapat mulai menerima pesanan.',
                         'verification']
                 );
+
+                // KIRIM PUSH NOTIFICATION KE APLIKASI
+                try {
+                    await notificationService.sendVerificationNotification(user_id, mitraName);
+                } catch (pushError) {
+                    console.error('Push notification error (non-blocking):', pushError.message);
+                    // Tidak perlu rollback, push notification gagal tapi proses tetap lanjut
+                }
+
+            } else {
+                // Notifikasi REJECT (opsional)
+                const rejectMessage = rejection_reason
+                    ? `Pendaftaran mitra ditolak. Alasan: ${rejection_reason}`
+                    : 'Pendaftaran mitra ditolak. Silakan hubungi admin.';
+
+                await connection.query(
+                    `INSERT INTO notifications (user_id, title, message, type, is_read) 
+                     VALUES (?, ?, ?, ?, 0)`,
+                    [user_id, '❌ Pendaftaran Ditolak', rejectMessage, 'rejection']
+                );
+
+                // Kirim push notification penolakan
+                try {
+                    await notificationService.sendRejectionNotification(user_id, rejection_reason);
+                } catch (pushError) {
+                    console.error('Push notification error (non-blocking):', pushError.message);
+                }
             }
 
             await connection.commit();
 
             res.json({
                 success: true,
-                message: is_verified ? 'Mitra berhasil diverifikasi' : 'Verifikasi mitra dibatalkan',
-                data: { is_verified }
+                message: is_verified ? 'Mitra berhasil diverifikasi dan notifikasi terkirim' : 'Verifikasi mitra dibatalkan',
+                data: {
+                    is_verified,
+                    notification_sent: is_verified ? true : false
+                }
             });
 
         } catch (error) {
