@@ -485,6 +485,33 @@ class NotificationService {
         return result;
     }
 
+    // Di notificationService.js tambahkan method ini jika belum ada
+    async sendPaymentSuccessNotificationToCustomer(customerId, orderId, orderCode, totalAmount) {
+        const formattedAmount = new Intl.NumberFormat('id-ID', {
+            style: 'currency',
+            currency: 'IDR'
+        }).format(totalAmount);
+
+        const notificationData = {
+            title: '✅ Pembayaran Berhasil!',
+            message: `Pembayaran untuk pesanan ${orderCode} sebesar ${formattedAmount} telah berhasil. Pesanan Anda akan segera diproses oleh mitra.`,
+            type: 'payment_success'
+        };
+
+        const additionalData = {
+            screen: 'orders',
+            action: 'view_order',
+            order_id: orderId.toString(),
+            order_code: orderCode,
+            status: 'paid'
+        };
+
+        const result = await this.sendToUser(customerId, notificationData, additionalData);
+        await this.saveNotificationToDatabase(customerId, notificationData.title, notificationData.message, 'payment');
+
+        return result;
+    }
+
     // ========== FUNGSI BANTUAN ==========
 
     // Simpan notifikasi ke database

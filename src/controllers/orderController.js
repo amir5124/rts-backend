@@ -3,7 +3,7 @@ const PaymentController = require('./paymentController');
 const notificationService = require('../services/notificationService');
 
 const OrderController = {
-    // 1. CREATE ORDER
+    // 1. CREATE ORDER (Tanpa notifikasi - notifikasi dikirim saat payment success)
     createOrder: async (req, res) => {
         let connection;
         const orderCode = `ORD-${Date.now()}`;
@@ -43,26 +43,12 @@ const OrderController = {
             const orderId = orderResult.insertId;
             console.log(`DB: Order disimpan (ID: ${orderId}).`);
 
-            // Get customer info for notification
+            // Get customer info for payment gateway
             const [customerRows] = await connection.query(
                 "SELECT name, phone, email FROM users WHERE id = ?",
                 [customer_id]
             );
             const customer = customerRows[0];
-
-            // Get service info for notification
-            const [serviceRows] = await connection.query(
-                "SELECT service_name FROM services WHERE id = ?",
-                [service_id]
-            );
-            const serviceName = serviceRows[0]?.service_name || 'Layanan';
-
-            // Get mitra info for notification
-            const [mitraRows] = await connection.query(
-                "SELECT name FROM users WHERE id = ?",
-                [mitra_id]
-            );
-            const mitraName = mitraRows[0]?.name || 'Mitra';
 
             if (!customer) throw new Error("Customer tidak ditemukan.");
 
@@ -79,53 +65,14 @@ const OrderController = {
             await connection.commit();
             console.log("DB: Transaksi BERHASIL di-commit.");
 
-            // ========== KIRIM NOTIFIKASI KE MITRA ==========
-            try {
-                console.log(`📢 Mengirim notifikasi pesanan baru ke mitra ID: ${mitra_id}`);
-
-                const notificationResult = await notificationService.sendNewOrderNotificationToMitra(
-                    mitra_id,
-                    orderId,
-                    customer.name,
-                    serviceName,
-                    orderCode
-                );
-
-                if (notificationResult.success) {
-                    console.log(`✅ Notifikasi pesanan baru berhasil dikirim ke mitra (${notificationResult.successCount} device)`);
-                } else {
-                    console.log(`⚠️ Gagal mengirim notifikasi ke mitra: ${notificationResult.message}`);
-                }
-            } catch (notifError) {
-                console.error('❌ Error sending notification to mitra:', notifError.message);
-            }
-
-            // ========== KIRIM NOTIFIKASI KE CUSTOMER ==========
-            try {
-                console.log(`📢 Mengirim notifikasi pesanan dibuat ke customer ID: ${customer_id}`);
-
-                const formattedAmount = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(order_info.total_bayar);
-
-                const customerNotificationResult = await notificationService.sendOrderCreatedNotificationToCustomer(
-                    customer_id,
-                    orderId,
-                    orderCode,
-                    order_info.total_bayar
-                );
-
-                if (customerNotificationResult.success) {
-                    console.log(`✅ Notifikasi pesanan dibuat berhasil dikirim ke customer`);
-                }
-            } catch (notifError) {
-                console.error('❌ Error sending notification to customer:', notifError.message);
-            }
+            // 🔴 NOTIFIKASI DIHAPUS DARI SINI - akan dikirim saat payment success di PaymentController
 
             return res.json({
                 success: true,
                 order_code: orderCode,
                 order_id: orderId,
                 payment_info: paymentResult,
-                notification_sent: true
+                notification_sent: false // Notifikasi akan dikirim setelah payment success
             });
 
         } catch (error) {
@@ -1023,49 +970,55 @@ const OrderController = {
 
     // ========== ENDPOINT UNTUK MITRA (ORDER MANAGEMENT) ==========
 
-    // 9. GET ORDER DETAIL FOR MITRA
+    // 10. GET ORDER DETAIL FOR MITRA
     getOrderDetailForMitra: async (req, res) => {
         let connection;
         const { id } = req.params;
-        const mitraId = req.user?.id; // Ambil dari auth middleware
+        const mitra_id = req.user?.id;
 
         try {
             connection = await db.getConnection();
 
-            const [orders] = await connection.query(
-                `SELECT 
+            const query = `
+            SELECT 
                 o.*,
                 u.name as customer_name, 
                 u.phone as customer_phone, 
                 u.email as customer_email,
                 u.profile_pic as customer_profile_pic,
-                s.service_name, s.description as service_description, s.base_price,
-                p.id as payment_id, p.method as payment_method, 
-                p.status as payment_status, p.amount as payment_amount
+                s.service_name, 
+                s.description as service_description,
+                sp.price as base_price,
+                sp.duration as service_duration,
+                p.id as payment_id, 
+                p.method as payment_method, 
+                p.status as payment_status, 
+                p.amount as payment_amount,
+                p.va_number,
+                p.qris_url
             FROM orders o
             LEFT JOIN users u ON o.customer_id = u.id
             LEFT JOIN services s ON o.service_id = s.id
+            LEFT JOIN service_prices sp ON s.id = sp.service_id AND sp.duration = o.duration
             LEFT JOIN payments p ON o.id = p.order_id
-            WHERE o.id = ? AND o.mitra_id = ?`,
-                [id, mitraId]
-            );
+            WHERE o.id = ? AND o.mitra_id = ?
+        `;
 
-            if (orders.length === 0) {
+            const [rows] = await connection.query(query, [id, mitra_id]);
+
+            if (rows.length === 0) {
                 return res.status(404).json({
                     success: false,
-                    message: 'Order tidak ditemukan atau bukan milik mitra ini'
+                    message: 'Pesanan tidak ditemukan'
                 });
             }
 
-            const order = orders[0];
-
-            const formattedOrder = {
+            const order = rows[0];
+            const response = {
                 id: order.id,
                 order_code: order.order_code,
                 status: order.status,
                 total_amount: parseFloat(order.total_amount),
-                transport_fee: parseFloat(order.transport_fee) || 0,
-                admin_fee: parseFloat(order.admin_fee) || 0,
                 scheduled_at: order.scheduled_at,
                 note: order.note,
                 duration: order.duration,
@@ -1083,37 +1036,39 @@ const OrderController = {
                     base_price: parseFloat(order.base_price) || 0
                 },
                 location: {
-                    address_google: order.address_google,
-                    address_detail: order.address_detail,
+                    address: order.address_google,
+                    detail: order.address_detail,
                     latitude: order.latitude_dest ? parseFloat(order.latitude_dest) : null,
                     longitude: order.longitude_dest ? parseFloat(order.longitude_dest) : null
                 },
-                payment: order.payment_id ? {
+                payment: {
                     id: order.payment_id,
                     method: order.payment_method,
                     status: order.payment_status,
-                    amount: parseFloat(order.payment_amount) || parseFloat(order.total_amount)
-                } : null,
+                    amount: parseFloat(order.payment_amount) || parseFloat(order.total_amount),
+                    va_number: order.va_number,
+                    qris_url: order.qris_url
+                },
                 created_at: order.created_at
             };
 
-            return res.json({
+            res.json({
                 success: true,
-                data: { order: formattedOrder }
+                data: { order: response }
             });
 
         } catch (error) {
             console.error('Error in getOrderDetailForMitra:', error);
-            return res.status(500).json({
+            res.status(500).json({
                 success: false,
-                message: error.message
+                message: 'Terjadi kesalahan pada server'
             });
         } finally {
             if (connection) connection.release();
         }
     },
 
-    // 10. MITRA ACCEPT ORDER
+    // 11. MITRA ACCEPT ORDER
     acceptOrder: async (req, res) => {
         let connection;
         const { id } = req.params;
@@ -1123,13 +1078,12 @@ const OrderController = {
             connection = await db.getConnection();
             await connection.beginTransaction();
 
-            // Cek apakah order exists dan milik mitra ini
             const [orderRows] = await connection.query(
                 `SELECT o.*, u.name as customer_name, s.service_name 
-             FROM orders o
-             LEFT JOIN users u ON o.customer_id = u.id
-             LEFT JOIN services s ON o.service_id = s.id
-             WHERE o.id = ? AND o.mitra_id = ?`,
+                 FROM orders o
+                 LEFT JOIN users u ON o.customer_id = u.id
+                 LEFT JOIN services s ON o.service_id = s.id
+                 WHERE o.id = ? AND o.mitra_id = ?`,
                 [id, mitraId]
             );
 
@@ -1142,9 +1096,8 @@ const OrderController = {
             }
 
             const order = orderRows[0];
-
-            // Validasi status
             const allowedStatuses = ['paid', 'pending_payment'];
+
             if (!allowedStatuses.includes(order.status)) {
                 await connection.rollback();
                 return res.status(400).json({
@@ -1153,7 +1106,6 @@ const OrderController = {
                 });
             }
 
-            // Update status order
             await connection.query(
                 'UPDATE orders SET status = ?, confirmed_at_mitra = NOW() WHERE id = ?',
                 ['accepted', id]
@@ -1161,9 +1113,7 @@ const OrderController = {
 
             await connection.commit();
 
-            // Kirim notifikasi ke customer
             try {
-                const notificationService = require('../services/notificationService');
                 await notificationService.sendOrderConfirmedNotificationToCustomer(
                     order.customer_id,
                     id,
@@ -1195,7 +1145,7 @@ const OrderController = {
         }
     },
 
-    // 11. MITRA REJECT ORDER
+    // 12. MITRA REJECT ORDER
     rejectOrder: async (req, res) => {
         let connection;
         const { id } = req.params;
@@ -1208,8 +1158,8 @@ const OrderController = {
 
             const [orderRows] = await connection.query(
                 `SELECT o.*, u.name as customer_name 
-             FROM orders o
-             WHERE o.id = ? AND o.mitra_id = ?`,
+                 FROM orders o
+                 WHERE o.id = ? AND o.mitra_id = ?`,
                 [id, mitraId]
             );
 
@@ -1232,13 +1182,11 @@ const OrderController = {
                 });
             }
 
-            // Update status order
             await connection.query(
                 'UPDATE orders SET status = ? WHERE id = ?',
                 ['cancelled', id]
             );
 
-            // Update payment status
             await connection.query(
                 'UPDATE payments SET status = ? WHERE order_id = ?',
                 ['REFUNDED', id]
@@ -1246,9 +1194,7 @@ const OrderController = {
 
             await connection.commit();
 
-            // Kirim notifikasi ke customer
             try {
-                const notificationService = require('../services/notificationService');
                 await notificationService.sendOrderCancelledNotificationToCustomer(
                     order.customer_id,
                     id,
@@ -1280,7 +1226,7 @@ const OrderController = {
         }
     },
 
-    // 12. MITRA START ORDER
+    // 13. MITRA START ORDER
     startOrder: async (req, res) => {
         let connection;
         const { id } = req.params;
@@ -1292,8 +1238,8 @@ const OrderController = {
 
             const [orderRows] = await connection.query(
                 `SELECT o.*, u.name as customer_name 
-             FROM orders o
-             WHERE o.id = ? AND o.mitra_id = ?`,
+                 FROM orders o
+                 WHERE o.id = ? AND o.mitra_id = ?`,
                 [id, mitraId]
             );
 
@@ -1307,7 +1253,6 @@ const OrderController = {
 
             const order = orderRows[0];
 
-            // Validasi status
             if (order.status !== 'accepted') {
                 await connection.rollback();
                 return res.status(400).json({
@@ -1316,7 +1261,6 @@ const OrderController = {
                 });
             }
 
-            // Update status order
             await connection.query(
                 'UPDATE orders SET status = ? WHERE id = ?',
                 ['ongoing', id]
@@ -1324,9 +1268,7 @@ const OrderController = {
 
             await connection.commit();
 
-            // Kirim notifikasi ke customer
             try {
-                const notificationService = require('../services/notificationService');
                 await notificationService.sendOrderProcessingNotificationToCustomer(
                     order.customer_id,
                     id,
@@ -1357,7 +1299,7 @@ const OrderController = {
         }
     },
 
-    // 13. MITRA COMPLETE ORDER
+    // 14. MITRA COMPLETE ORDER
     completeOrder: async (req, res) => {
         let connection;
         const { id } = req.params;
@@ -1369,10 +1311,10 @@ const OrderController = {
 
             const [orderRows] = await connection.query(
                 `SELECT o.*, u.name as customer_name, s.service_name 
-             FROM orders o
-             LEFT JOIN users u ON o.customer_id = u.id
-             LEFT JOIN services s ON o.service_id = s.id
-             WHERE o.id = ? AND o.mitra_id = ?`,
+                 FROM orders o
+                 LEFT JOIN users u ON o.customer_id = u.id
+                 LEFT JOIN services s ON o.service_id = s.id
+                 WHERE o.id = ? AND o.mitra_id = ?`,
                 [id, mitraId]
             );
 
@@ -1386,7 +1328,6 @@ const OrderController = {
 
             const order = orderRows[0];
 
-            // Validasi status
             if (order.status !== 'ongoing' && order.status !== 'accepted') {
                 await connection.rollback();
                 return res.status(400).json({
@@ -1395,13 +1336,11 @@ const OrderController = {
                 });
             }
 
-            // Update status order
             await connection.query(
                 'UPDATE orders SET status = ?, completed_at = NOW() WHERE id = ?',
                 ['completed', id]
             );
 
-            // Update payment status
             await connection.query(
                 'UPDATE payments SET status = ? WHERE order_id = ?',
                 ['SUCCESS', id]
@@ -1409,9 +1348,7 @@ const OrderController = {
 
             await connection.commit();
 
-            // Kirim notifikasi ke customer
             try {
-                const notificationService = require('../services/notificationService');
                 await notificationService.sendOrderCompletedNotificationToCustomer(
                     order.customer_id,
                     id,
@@ -1421,9 +1358,6 @@ const OrderController = {
             } catch (err) {
                 console.error('Error sending notification:', err.message);
             }
-
-            // TODO: Tambahkan ke wallet mitra (opsional)
-            // await addToMitraWallet(mitraId, order.total_amount);
 
             return res.json({
                 success: true,

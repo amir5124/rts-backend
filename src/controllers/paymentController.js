@@ -1,9 +1,12 @@
 const LinkQu = require('../utils/linkqu');
 const moment = require('moment-timezone');
 const db = require('../config/db');
+const notificationService = require('../services/notificationService'); // 🔥 TAMBAHKAN
 
 const PaymentController = {
-    // --- REQUEST PEMBAYARAN (EXISTING DENGAN PENYESUAIAN) ---
+    /**
+     * REQUEST PEMBAYARAN KE GATEWAY
+     */
     requestPaymentGateway: async (payload, tx = null) => {
         const { order_id, order_code, amount, customer, method, bank_code } = payload;
         const client = tx || db;
@@ -25,6 +28,7 @@ const PaymentController = {
 
             let phone = (customer.phone || '081234567890').replace(/[^0-9]/g, '');
             if (phone.startsWith('0')) phone = '62' + phone.substring(1);
+            if (phone.length < 10) phone = '628123456789';
 
             const linkquData = {
                 amount: Math.round(Number(amount)),
@@ -40,14 +44,16 @@ const PaymentController = {
             };
 
             let result;
-            if (method.toUpperCase().includes('VA')) {
+            if (method && method.toUpperCase().includes('VA')) {
                 result = await LinkQu.createVA(linkquData);
             } else {
                 result = await LinkQu.createQRIS(linkquData);
             }
 
             const isSuccess = result?.response_code === '200' || result?.status === 'SUCCESS';
-            if (!isSuccess) throw new Error(`LinkQu: ${result?.response_desc || "Koneksi Gagal"}`);
+            if (!isSuccess) {
+                throw new Error(`LinkQu: ${result?.response_desc || "Koneksi Gagal"}`);
+            }
 
             const vaNumber = result.data?.va_number || result.virtual_account || result.va_number || null;
             const qrisUrl = result.data?.qr_url || result.imageqris || result.qr_url || null;
@@ -68,104 +74,344 @@ const PaymentController = {
 
             return { vaNumber, qrisUrl, partner_reff };
         } catch (error) {
-            console.error("[Payment] ❌ Error:", error.message);
+            console.error("[Payment] ❌ Error requestPaymentGateway:", error.message);
             throw error;
         }
     },
 
-    // --- HANDLE CALLBACK DARI LINKQU ---
+    /**
+     * HANDLE CALLBACK DARI LINKQU
+     * 🔥 DITAMBAHKAN NOTIFIKASI KE MITRA & CUSTOMER SAAT PAYMENT SUCCESS
+     */
     handleCallback: async (req, res) => {
         console.log("📥 [CALLBACK] Incoming:", JSON.stringify(req.body, null, 2));
-        try {
-            const { partner_reff, status } = req.body;
-            const statusUpper = (status || "").toUpperCase();
 
-            if (statusUpper === "SUCCESS" || statusUpper === "SETTLED") {
-                // 1. Cari data payment di DB
-                const [payments] = await db.query(
-                    `SELECT order_id FROM payments WHERE partner_reff = ?`,
+        let connection;
+        try {
+            connection = await db.getConnection();
+            await connection.beginTransaction();
+
+            const { partner_reff, status, transaction_status, response_code } = req.body;
+            const statusUpper = (status || transaction_status || "").toUpperCase();
+            const isSuccess = statusUpper === "SUCCESS" ||
+                statusUpper === "SETTLED" ||
+                response_code === "00" ||
+                response_code === "200";
+
+            if (isSuccess) {
+                // 1. Cari data payment, order, customer, dan mitra LENGKAP
+                const [payments] = await connection.query(
+                    `SELECT 
+                        p.order_id, 
+                        o.mitra_id, 
+                        o.customer_id, 
+                        o.order_code, 
+                        o.service_id,
+                        o.total_amount,
+                        s.service_name, 
+                        c.name as customer_name,
+                        m.name as mitra_name
+                     FROM payments p
+                     LEFT JOIN orders o ON p.order_id = o.id
+                     LEFT JOIN services s ON o.service_id = s.id
+                     LEFT JOIN users c ON o.customer_id = c.id
+                     LEFT JOIN users m ON o.mitra_id = m.id
+                     WHERE p.partner_reff = ?`,
                     [partner_reff]
                 );
 
                 if (payments.length > 0) {
                     const orderId = payments[0].order_id;
+                    const mitraId = payments[0].mitra_id;
+                    const customerId = payments[0].customer_id;
+                    const orderCode = payments[0].order_code;
+                    const serviceName = payments[0].service_name;
+                    const customerName = payments[0].customer_name;
+                    const totalAmount = payments[0].total_amount;
 
                     // 2. Update Status Payment
-                    await db.query(
-                        `UPDATE payments SET status = 'SUCCESS', updated_at = NOW() WHERE partner_reff = ?`,
-                        [partner_reff]
+                    await connection.query(
+                        `UPDATE payments SET status = 'SUCCESS', updated_at = NOW(), payload_response = ? WHERE partner_reff = ?`,
+                        [JSON.stringify(req.body), partner_reff]
                     );
 
-                    // 3. Update Status Order (Sesuaikan nama tabel order Anda)
-                    await db.query(
+                    // 3. Update Status Order jadi PAID
+                    await connection.query(
                         `UPDATE orders SET status = 'PAID', updated_at = NOW() WHERE id = ?`,
                         [orderId]
                     );
 
+                    await connection.commit();
                     console.log(`✅ [CALLBACK] Reff ${partner_reff} Success. Order ${orderId} UPDATED.`);
+
+                    // 🔥 ========== KIRIM NOTIFIKASI KE MITRA ==========
+                    if (mitraId) {
+                        try {
+                            const notificationResult = await notificationService.sendNewOrderNotificationToMitra(
+                                mitraId,
+                                orderId,
+                                customerName,
+                                serviceName,
+                                orderCode
+                            );
+
+                            if (notificationResult.success) {
+                                console.log(`✅ Notifikasi pesanan baru (sudah bayar) terkirim ke mitra ${mitraId} (${notificationResult.deviceCount} device)`);
+                            } else {
+                                console.log(`⚠️ Gagal mengirim notifikasi ke mitra ${mitraId}: ${notificationResult.message}`);
+                            }
+                        } catch (notifError) {
+                            console.error('❌ Error sending notification to mitra:', notifError.message);
+                        }
+                    }
+
+                    // 🔥 ========== KIRIM NOTIFIKASI KE CUSTOMER ==========
+                    if (customerId) {
+                        try {
+                            const formattedAmount = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(totalAmount);
+
+                            // Gunakan method yang sudah ada atau buat method baru
+                            const customerResult = await notificationService.sendPaymentSuccessNotificationToCustomer(
+                                customerId,
+                                orderId,
+                                orderCode,
+                                totalAmount
+                            );
+
+                            if (customerResult.success) {
+                                console.log(`✅ Notifikasi pembayaran sukses terkirim ke customer ${customerId}`);
+                            }
+                        } catch (notifError) {
+                            console.error('❌ Error sending notification to customer:', notifError.message);
+                        }
+                    }
+
                 } else {
+                    await connection.rollback();
                     console.warn(`⚠️ [CALLBACK] Reff ${partner_reff} not found.`);
                 }
+            } else {
+                await connection.rollback();
+                console.log(`📝 [CALLBACK] Reff ${partner_reff} status: ${statusUpper} - No action taken`);
             }
 
             // LinkQu membutuhkan response OK agar tidak mengirim ulang callback
             return res.status(200).json({ status: "SUCCESS" });
         } catch (err) {
+            if (connection) await connection.rollback();
             console.error("❌ [CALLBACK ERROR]:", err.message);
-            return res.status(500).json({ status: "ERROR" });
+            return res.status(500).json({ status: "ERROR", message: err.message });
+        } finally {
+            if (connection) connection.release();
         }
     },
 
-    // --- CHECK STATUS (POLLING DARI FRONTEND) ---
+    /**
+     * CHECK STATUS (POLLING DARI FRONTEND)
+     */
     checkStatus: async (req, res) => {
         const { reff } = req.params;
+
+        if (!reff) {
+            return res.status(400).json({
+                status: 'ERROR',
+                message: 'Parameter reff tidak ditemukan'
+            });
+        }
+
         try {
+            console.log(`🔍 [POLLING] Checking status for Reff: ${reff}`);
+
             // 1. Cek Database Lokal Terlebih Dahulu
             const [rows] = await db.query(
-                `SELECT p.status as payment_status, o.status as order_status 
+                `SELECT p.status as payment_status, o.status as order_status, p.order_id 
                  FROM payments p
                  LEFT JOIN orders o ON p.order_id = o.id
                  WHERE p.partner_reff = ?`,
                 [reff]
             );
 
+            // Jika di DB sudah SUCCESS, langsung return
             if (rows.length > 0) {
-                const status = rows[0].payment_status.toUpperCase();
-                if (['SUCCESS', 'SETTLED', 'PAID'].includes(status)) {
+                const paymentStatus = rows[0].payment_status?.toUpperCase() || '';
+                if (['SUCCESS', 'SETTLED', 'PAID'].includes(paymentStatus)) {
                     return res.json({
                         status: 'SUCCESS',
-                        message: 'Pembayaran sudah lunas (Verified by DB)'
+                        message: 'Pembayaran sudah lunas (Verified by DB)',
+                        data: {
+                            payment_status: rows[0].payment_status,
+                            order_status: rows[0].order_status
+                        }
                     });
                 }
             }
 
-            // 2. Jika di DB masih PENDING, Tanya ke Vendor (LinkQu)
-            console.log(`🔍 [POLLING] Checking Vendor for Reff: ${reff}`);
-            const result = await LinkQu.checkStatus(reff); // Pastikan util LinkQu Anda punya fungsi checkStatus
+            // 2. Cek ke Vendor LinkQu
+            let vendorResult = null;
+            let vendorSuccess = false;
 
-            const isSuccess =
-                (result?.status && (result.status.toUpperCase() === 'SUCCESS' || result.status.toUpperCase() === 'SETTLED')) ||
-                (result?.response_code === '00' || result?.response_code === '200');
+            try {
+                // Panggil fungsi checkStatus yang sudah kita buat di linkqu.js
+                if (typeof LinkQu.checkStatus === 'function') {
+                    vendorResult = await LinkQu.checkStatus(reff);
+                    console.log(`[LinkQu] Status check result:`, vendorResult);
 
-            if (isSuccess) {
-                // 3. Jika Vendor bilang OK, Update DB (Antisipasi callback telat)
-                const orderId = rows[0]?.order_id;
+                    // Parse hasil dari LinkQu
+                    const responseCode = vendorResult?.response_code || vendorResult?.code || '';
+                    const vendorStatus = vendorResult?.status || vendorResult?.transaction_status || '';
+
+                    vendorSuccess = responseCode === '00' ||
+                        responseCode === '200' ||
+                        vendorStatus === 'SUCCESS' ||
+                        vendorStatus === 'SETTLED' ||
+                        vendorStatus === 'PAID';
+                } else {
+                    console.warn('⚠️ LinkQu.checkStatus not available');
+                    vendorResult = { status: 'PENDING', response_desc: 'Check status tidak tersedia' };
+                }
+            } catch (vendorError) {
+                console.error('[LinkQu] Vendor check error:', vendorError.message);
+                vendorResult = { status: 'PENDING', response_desc: 'Gagal connect ke server' };
+            }
+
+            // 3. Jika SUCCESS dari Vendor, Update Database
+            if (vendorSuccess && rows.length > 0) {
+                console.log(`✅ [POLLING] Payment SUCCESS for reff: ${reff}, updating DB...`);
+
                 await db.query(
                     `UPDATE payments SET status = 'SUCCESS', updated_at = NOW() WHERE partner_reff = ?`,
                     [reff]
                 );
-                if (orderId) {
-                    await db.query(`UPDATE orders SET status = 'PAID' WHERE id = ?`, [orderId]);
+
+                if (rows[0].order_id) {
+                    await db.query(
+                        `UPDATE orders SET status = 'PAID', updated_at = NOW() WHERE id = ?`,
+                        [rows[0].order_id]
+                    );
                 }
 
-                return res.json({ status: 'SUCCESS', message: 'Pembayaran Berhasil' });
+                return res.json({
+                    status: 'SUCCESS',
+                    message: 'Pembayaran Berhasil',
+                    data: vendorResult
+                });
             }
 
-            return res.json({ status: 'PENDING', message: 'Menunggu pembayaran' });
+            // 4. Masih PENDING atau ERROR
+            const isError = vendorResult?.status === 'ERROR' || vendorResult?.response_code === '500';
+
+            if (isError && rows.length > 0 && rows[0].payment_status === 'PENDING') {
+                // Update status jadi FAILED jika perlu
+                await db.query(
+                    `UPDATE payments SET status = 'FAILED', updated_at = NOW() WHERE partner_reff = ?`,
+                    [reff]
+                );
+
+                return res.json({
+                    status: 'FAILED',
+                    message: vendorResult?.response_desc || 'Pembayaran gagal',
+                    data: vendorResult
+                });
+            }
+
+            return res.json({
+                status: 'PENDING',
+                message: vendorResult?.response_desc || 'Menunggu pembayaran',
+                data: vendorResult
+            });
 
         } catch (err) {
             console.error(`❌ [CHECK STATUS ERROR]:`, err.message);
-            return res.json({ status: 'PENDING', error: err.message });
+            return res.status(500).json({
+                status: 'ERROR',
+                message: 'Terjadi kesalahan saat mengecek status',
+                error: process.env.NODE_ENV === 'development' ? err.message : undefined
+            });
+        }
+    },
+
+    /**
+     * GET PAYMENT DETAIL
+     */
+    getPaymentDetail: async (req, res) => {
+        const { order_id } = req.params;
+
+        try {
+            const [rows] = await db.query(
+                `SELECT * FROM payments WHERE order_id = ? ORDER BY created_at DESC LIMIT 1`,
+                [order_id]
+            );
+
+            if (rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Data pembayaran tidak ditemukan'
+                });
+            }
+
+            res.json({
+                success: true,
+                data: rows[0]
+            });
+        } catch (error) {
+            console.error('❌ Get Payment Detail Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Terjadi kesalahan pada server'
+            });
+        }
+    },
+
+    /**
+     * CANCEL PAYMENT
+     */
+    cancelPayment: async (req, res) => {
+        const { payment_id } = req.params;
+
+        try {
+            // Cek payment status
+            const [payments] = await db.query(
+                `SELECT partner_reff, status FROM payments WHERE id = ?`,
+                [payment_id]
+            );
+
+            if (payments.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Pembayaran tidak ditemukan'
+                });
+            }
+
+            if (payments[0].status !== 'PENDING') {
+                return res.status(400).json({
+                    success: false,
+                    message: `Pembayaran status ${payments[0].status} tidak dapat dibatalkan`
+                });
+            }
+
+            // Panggil API cancel dari LinkQu
+            let cancelResult = null;
+            if (typeof LinkQu.cancelTransaction === 'function') {
+                cancelResult = await LinkQu.cancelTransaction(payments[0].partner_reff);
+            }
+
+            // Update status di DB
+            await db.query(
+                `UPDATE payments SET status = 'CANCELLED', updated_at = NOW() WHERE id = ?`,
+                [payment_id]
+            );
+
+            res.json({
+                success: true,
+                message: 'Pembayaran berhasil dibatalkan',
+                data: cancelResult
+            });
+        } catch (error) {
+            console.error('❌ Cancel Payment Error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Terjadi kesalahan pada server'
+            });
         }
     }
 };
