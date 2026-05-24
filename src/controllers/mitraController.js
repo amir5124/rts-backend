@@ -726,10 +726,11 @@ const mitraController = {
         }
     },
 
+    // Approve mitra registration (Admin only)
     approveMitra: async (req, res) => {
         let connection;
         const { user_id } = req.params;
-        const { is_verified, rejection_reason } = req.body; // tambah rejection_reason
+        const { is_verified, rejection_reason } = req.body;
 
         try {
             connection = await db.getConnection();
@@ -737,10 +738,10 @@ const mitraController = {
 
             // Cek apakah mitra exists dan ambil data user
             const [mitraCheck] = await connection.query(
-                `SELECT md.id, md.is_verified, u.name 
-                 FROM mitra_details md 
-                 JOIN users u ON md.user_id = u.id 
-                 WHERE md.user_id = ?`,
+                `SELECT md.id, md.is_verified, u.name, u.email 
+             FROM mitra_details md 
+             JOIN users u ON md.user_id = u.id 
+             WHERE md.user_id = ?`,
                 [user_id]
             );
 
@@ -760,43 +761,49 @@ const mitraController = {
                 [is_verified ? 1 : 0, user_id]
             );
 
-            // Insert notifikasi ke database
-            if (is_verified) {
-                // Notifikasi APPROVE
-                await connection.query(
-                    `INSERT INTO notifications (user_id, title, message, type, is_read) 
-                     VALUES (?, ?, ?, ?, 0)`,
-                    [user_id,
-                        '✅ Akun Diverifikasi',
-                        'Selamat! Akun mitra Anda telah diverifikasi. Anda sekarang dapat mulai menerima pesanan.',
-                        'verification']
-                );
+            let notificationSent = false;
 
-                // KIRIM PUSH NOTIFICATION KE APLIKASI
-                try {
-                    await notificationService.sendVerificationNotification(user_id, mitraName);
-                } catch (pushError) {
-                    console.error('Push notification error (non-blocking):', pushError.message);
-                    // Tidak perlu rollback, push notification gagal tapi proses tetap lanjut
-                }
+            // Cek apakah tabel notifications ada sebelum insert
+            const [tableCheck] = await connection.query(
+                "SHOW TABLES LIKE 'notifications'"
+            );
 
+            if (tableCheck.length === 0) {
+                console.warn('⚠️ Tabel notifications belum dibuat, skip insert notifikasi');
             } else {
-                // Notifikasi REJECT (opsional)
-                const rejectMessage = rejection_reason
-                    ? `Pendaftaran mitra ditolak. Alasan: ${rejection_reason}`
-                    : 'Pendaftaran mitra ditolak. Silakan hubungi admin.';
-
-                await connection.query(
-                    `INSERT INTO notifications (user_id, title, message, type, is_read) 
+                // Jika diverifikasi, kirim notifikasi APPROVE
+                if (is_verified) {
+                    // 1. Simpan notifikasi ke database
+                    await connection.query(
+                        `INSERT INTO notifications (user_id, title, message, type, is_read) 
                      VALUES (?, ?, ?, ?, 0)`,
-                    [user_id, '❌ Pendaftaran Ditolak', rejectMessage, 'rejection']
-                );
+                        [user_id,
+                            '✅ Akun Diverifikasi',
+                            'Selamat! Akun mitra Anda telah diverifikasi. Anda sekarang dapat mulai menerima pesanan.',
+                            'verification']
+                    );
 
-                // Kirim push notification penolakan
-                try {
-                    await notificationService.sendRejectionNotification(user_id, rejection_reason);
-                } catch (pushError) {
-                    console.error('Push notification error (non-blocking):', pushError.message);
+                    // 2. Kirim PUSH NOTIFICATION (opsional)
+                    try {
+                        const notificationService = require('../services/notificationService');
+                        const pushResult = await notificationService.sendVerificationNotification(user_id, mitraName);
+                        notificationSent = pushResult.success;
+                        console.log(`Push notification for user ${user_id}:`, pushResult);
+                    } catch (pushError) {
+                        console.error('Push notification error (non-blocking):', pushError.message);
+                    }
+
+                } else {
+                    // Jika ditolak
+                    const rejectMessage = rejection_reason
+                        ? `Pendaftaran mitra ditolak. Alasan: ${rejection_reason}`
+                        : 'Pendaftaran mitra ditolak. Silakan hubungi admin.';
+
+                    await connection.query(
+                        `INSERT INTO notifications (user_id, title, message, type, is_read) 
+                     VALUES (?, ?, ?, ?, 0)`,
+                        [user_id, '❌ Pendaftaran Ditolak', rejectMessage, 'rejection']
+                    );
                 }
             }
 
@@ -804,27 +811,37 @@ const mitraController = {
 
             res.json({
                 success: true,
-                message: is_verified ? 'Mitra berhasil diverifikasi dan notifikasi terkirim' : 'Verifikasi mitra dibatalkan',
+                message: is_verified
+                    ? 'Mitra berhasil diverifikasi'
+                    : 'Verifikasi mitra dibatalkan',
                 data: {
                     is_verified,
-                    notification_sent: is_verified ? true : false
+                    push_notification_sent: notificationSent
                 }
             });
 
         } catch (error) {
             if (connection) await connection.rollback();
             console.error('❌ Approve Mitra Error:', error);
+
+            // Error handling yang lebih spesifik
+            if (error.code === 'ER_NO_SUCH_TABLE') {
+                return res.status(500).json({
+                    success: false,
+                    message: 'Tabel notifikasi belum dibuat. Silakan hubungi administrator.',
+                    error_details: 'Missing notifications table'
+                });
+            }
+
             res.status(500).json({
                 success: false,
-                message: 'Terjadi kesalahan pada server'
+                message: 'Terjadi kesalahan pada server',
+                error: process.env.NODE_ENV === 'development' ? error.message : undefined
             });
         } finally {
             if (connection) connection.release();
         }
     },
-
-    // Get all mitra registrations (for admin)
-    // controllers/mitraController.js - Perbaiki fungsi getAllMitraRegistrations
 
     getAllMitraRegistrations: async (req, res) => {
         let connection;
