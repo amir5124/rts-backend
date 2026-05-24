@@ -21,7 +21,7 @@ class NotificationService {
 
             if (devices.length === 0) {
                 console.log(`⚠️ No active devices with FCM token for user ${userId}`);
-                return null;
+                return { success: false, message: 'No active devices', deviceCount: 0 };
             }
 
             const fcmTokens = devices.map(device => device.fcm_token);
@@ -71,12 +71,20 @@ class NotificationService {
                 await this.handleInvalidTokens(connection, fcmTokens, response.responses);
             }
 
-            return response;
+            return {
+                success: true,
+                successCount: response.successCount,
+                failureCount: response.failureCount,
+                deviceCount: devices.length
+            };
 
         } catch (error) {
             console.error('❌ Error sending push notification:', error.message);
-            // Jangan throw error biar proses tetap jalan
-            return null;
+            return {
+                success: false,
+                message: error.message,
+                deviceCount: 0
+            };
         } finally {
             if (connection) connection.release();
         }
@@ -106,11 +114,13 @@ class NotificationService {
         }
     }
 
-    // Kirim notifikasi verifikasi akun mitra
+    // ========== NOTIFIKASI VERIFIKASI ==========
+
+    // Kirim notifikasi verifikasi akun mitra (APPROVE)
     async sendVerificationNotification(userId, mitraName = 'Mitra') {
         const notificationData = {
             title: '✅ Akun Diverifikasi!',
-            message: 'Selamat! Akun mitra Anda telah diverifikasi. Anda sekarang dapat mulai menerima pesanan dari pelanggan.',
+            message: `Selamat ${mitraName}! Akun mitra Anda telah diverifikasi. Anda sekarang dapat mulai menerima pesanan dari pelanggan.`,
             type: 'verification'
         };
 
@@ -120,14 +130,42 @@ class NotificationService {
             verification_status: 'approved'
         };
 
-        return await this.sendToUser(userId, notificationData, additionalData);
+        const result = await this.sendToUser(userId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'verification');
+
+        return result;
     }
 
-    // Kirim notifikasi penolakan akun mitra
-    async sendRejectionNotification(userId, reason = '') {
+    // Kirim notifikasi pembatalan verifikasi (UNVERIFY)
+    async sendUnverificationNotification(userId, mitraName = 'Mitra', reason = null) {
+        const reasonText = reason ? ` Alasan: ${reason}` : '';
+        const notificationData = {
+            title: '⚠️ Verifikasi Dibatalkan',
+            message: `Halo ${mitraName}, verifikasi akun mitra Anda telah dibatalkan.${reasonText} Silakan lengkapi data atau hubungi admin untuk informasi lebih lanjut.`,
+            type: 'unverification'
+        };
+
+        const additionalData = {
+            screen: 'profile_mitra',
+            action: 'check_status',
+            verification_status: 'unverified'
+        };
+
+        const result = await this.sendToUser(userId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'warning');
+
+        return result;
+    }
+
+    // Kirim notifikasi penolakan pendaftaran mitra (REJECTION)
+    async sendRejectionNotification(userId, reason = '', mitraName = 'Mitra') {
         const message = reason
-            ? `Maaf, pendaftaran mitra Anda ditolak. Alasan: ${reason}`
-            : 'Maaf, pendaftaran mitra Anda ditolak. Silakan hubungi admin untuk informasi lebih lanjut.';
+            ? `Halo ${mitraName}, maaf pendaftaran mitra Anda ditolak. Alasan: ${reason}. Silakan perbaiki data dan daftar ulang.`
+            : `Halo ${mitraName}, maaf pendaftaran mitra Anda ditolak. Silakan hubungi admin untuk informasi lebih lanjut.`;
 
         const notificationData = {
             title: '❌ Pendaftaran Ditolak',
@@ -137,10 +175,252 @@ class NotificationService {
 
         const additionalData = {
             screen: 'register_mitra',
-            action: 'rejected'
+            action: 'rejected',
+            can_retry: 'true'
         };
 
-        return await this.sendToUser(userId, notificationData, additionalData);
+        const result = await this.sendToUser(userId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'rejection');
+
+        return result;
+    }
+
+    // ========== NOTIFIKASI AKUN ==========
+
+    // Kirim notifikasi penonaktifan akun (DEACTIVATION)
+    async sendAccountDeactivationNotification(userId, mitraName = 'Mitra') {
+        const notificationData = {
+            title: '🗑️ Akun Dinonaktifkan',
+            message: `Halo ${mitraName}, akun mitra Anda telah dinonaktifkan oleh administrator. Akun Anda telah diubah menjadi akun pelanggan. Silakan hubungi admin jika ada pertanyaan.`,
+            type: 'account_deactivation'
+        };
+
+        const additionalData = {
+            screen: 'login',
+            action: 'logout',
+            account_status: 'deactivated',
+            new_role: 'customer'
+        };
+
+        const result = await this.sendToUser(userId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'account_deactivation');
+
+        return result;
+    }
+
+    // Kirim notifikasi reaktivasi akun (REACTIVATION)
+    async sendAccountReactivationNotification(userId, mitraName = 'Mitra') {
+        const notificationData = {
+            title: '✅ Akun Diaktifkan Kembali',
+            message: `Halo ${mitraName}, akun mitra Anda telah diaktifkan kembali oleh administrator. Anda sekarang dapat kembali menerima pesanan.`,
+            type: 'account_reactivation'
+        };
+
+        const additionalData = {
+            screen: 'dashboard_mitra',
+            action: 'refresh_data',
+            account_status: 'active'
+        };
+
+        const result = await this.sendToUser(userId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'account_reactivation');
+
+        return result;
+    }
+
+    // ========== NOTIFIKASI PESANAN ==========
+
+    // Kirim notifikasi pesanan baru
+    async sendNewOrderNotification(userId, orderId, customerName, serviceName) {
+        const notificationData = {
+            title: '📦 Pesanan Baru!',
+            message: `Halo, Anda mendapat pesanan baru dari ${customerName} untuk layanan ${serviceName}. Segera konfirmasi pesanan!`,
+            type: 'new_order'
+        };
+
+        const additionalData = {
+            screen: 'orders_mitra',
+            action: 'view_order',
+            order_id: orderId.toString()
+        };
+
+        const result = await this.sendToUser(userId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'order');
+
+        return result;
+    }
+
+    // Kirim notifikasi pesanan dibatalkan
+    async sendOrderCancelledNotification(userId, orderId, customerName, reason = null) {
+        const reasonText = reason ? ` Alasan: ${reason}` : '';
+        const notificationData = {
+            title: '❌ Pesanan Dibatalkan',
+            message: `Pesanan dari ${customerName} telah dibatalkan.${reasonText}`,
+            type: 'order_cancelled'
+        };
+
+        const additionalData = {
+            screen: 'orders_mitra',
+            action: 'refresh_orders',
+            order_id: orderId.toString(),
+            status: 'cancelled'
+        };
+
+        const result = await this.sendToUser(userId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'order');
+
+        return result;
+    }
+
+    // Kirim notifikasi pesanan selesai
+    async sendOrderCompletedNotification(userId, orderId, customerName) {
+        const notificationData = {
+            title: '✅ Pesanan Selesai',
+            message: `Pesanan untuk ${customerName} telah selesai. Jangan lupa minta rating ya!`,
+            type: 'order_completed'
+        };
+
+        const additionalData = {
+            screen: 'orders_mitra',
+            action: 'view_order',
+            order_id: orderId.toString(),
+            status: 'completed'
+        };
+
+        const result = await this.sendToUser(userId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'order');
+
+        return result;
+    }
+
+    // ========== NOTIFIKASI PENCAIRAN DANA ==========
+
+    // Kirim notifikasi pencairan dana berhasil
+    async sendWithdrawalSuccessNotification(userId, amount, bankName) {
+        const formattedAmount = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(amount);
+        const notificationData = {
+            title: '💰 Pencairan Dana Berhasil',
+            message: `Pencairan dana sebesar ${formattedAmount} ke rekening ${bankName} telah berhasil diproses.`,
+            type: 'withdrawal_success'
+        };
+
+        const additionalData = {
+            screen: 'wallet_mitra',
+            action: 'refresh_balance'
+        };
+
+        const result = await this.sendToUser(userId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'withdrawal');
+
+        return result;
+    }
+
+    // Kirim notifikasi pencairan dana gagal
+    async sendWithdrawalFailedNotification(userId, amount, reason) {
+        const formattedAmount = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(amount);
+        const notificationData = {
+            title: '⚠️ Pencairan Dana Gagal',
+            message: `Pencairan dana sebesar ${formattedAmount} gagal. Alasan: ${reason}. Silakan coba lagi atau hubungi admin.`,
+            type: 'withdrawal_failed'
+        };
+
+        const additionalData = {
+            screen: 'wallet_mitra',
+            action: 'retry_withdrawal'
+        };
+
+        const result = await this.sendToUser(userId, notificationData, additionalData);
+
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(userId, notificationData.title, notificationData.message, 'withdrawal');
+
+        return result;
+    }
+
+    // ========== FUNGSI BANTUAN ==========
+
+    // Simpan notifikasi ke database
+    async saveNotificationToDatabase(userId, title, message, type) {
+        let connection;
+        try {
+            connection = await db.getConnection();
+
+            const [tableCheck] = await connection.query(
+                "SHOW TABLES LIKE 'notifications'"
+            );
+
+            if (tableCheck.length > 0) {
+                await connection.query(
+                    `INSERT INTO notifications (user_id, title, message, type, is_read, created_at) 
+                     VALUES (?, ?, ?, ?, 0, NOW())`,
+                    [userId, title, message, type]
+                );
+                console.log(`✅ Notification saved to database for user ${userId}`);
+            }
+        } catch (error) {
+            console.error('❌ Error saving notification to database:', error.message);
+        } finally {
+            if (connection) connection.release();
+        }
+    }
+
+    // Kirim notifikasi massal ke banyak user
+    async sendToMultipleUsers(userIds, notificationData, additionalData = {}) {
+        const results = [];
+
+        for (const userId of userIds) {
+            const result = await this.sendToUser(userId, notificationData, additionalData);
+            results.push({ userId, ...result });
+        }
+
+        return {
+            success: true,
+            totalUsers: userIds.length,
+            results: results
+        };
+    }
+
+    // Kirim notifikasi ke semua mitra terverifikasi
+    async sendToAllVerifiedMitras(notificationData, additionalData = {}) {
+        let connection;
+
+        try {
+            connection = await db.getConnection();
+
+            const [mitras] = await connection.query(
+                `SELECT u.id FROM users u 
+                 INNER JOIN mitra_details m ON u.id = m.user_id 
+                 WHERE u.role = 'mitra' AND m.is_verified = 1 AND u.is_active = 1`
+            );
+
+            const userIds = mitras.map(m => m.id);
+
+            if (userIds.length === 0) {
+                return { success: false, message: 'No verified mitras found', totalUsers: 0 };
+            }
+
+            return await this.sendToMultipleUsers(userIds, notificationData, additionalData);
+
+        } catch (error) {
+            console.error('❌ Error sending to all mitras:', error.message);
+            return { success: false, message: error.message };
+        } finally {
+            if (connection) connection.release();
+        }
     }
 }
 
