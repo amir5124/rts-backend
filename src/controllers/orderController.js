@@ -21,7 +21,6 @@ const OrderController = {
             await connection.beginTransaction();
             console.log("DB: Transaksi dimulai.");
 
-            // Perbaiki query INSERT sesuai struktur tabel
             const queryInsert = `
                 INSERT INTO orders (
                     order_code, customer_id, mitra_id, service_id, duration,
@@ -89,7 +88,7 @@ const OrderController = {
         }
     },
 
-    // 2. GET ORDERS BY CUSTOMER
+    // 2. GET ORDERS BY CUSTOMER (DENGAN DATA PAYMENT LENGKAP)
     getOrdersByCustomer: async (req, res) => {
         let connection;
         const { customer_id } = req.params;
@@ -110,15 +109,17 @@ const OrderController = {
                     o.id, o.order_code, o.status, o.total_amount, o.scheduled_at,
                     o.service_id, o.duration, o.created_at, o.address_google, o.address_detail,
                     o.latitude_dest, o.longitude_dest, o.mitra_id, o.confirmed_at_mitra,
-                    o.confirmed_at_customer, o.note,
+                    o.confirmed_at_customer, o.note, o.transport_fee, o.admin_fee,
                     s.service_name, s.description as service_description,
-                    u.name as mitra_name, u.phone as mitra_phone, u.profile_pic as mitra_profile_pic,
-                    md.specialization, md.is_verified as mitra_is_verified, md.is_online as mitra_is_online,
-                    md.certificate_url,
+                    u.name as mitra_name, u.phone as mitra_phone, u.email as mitra_email, 
+                    u.profile_pic as mitra_profile_pic,
+                    md.specialization, md.is_verified as mitra_is_verified, 
+                    md.is_online as mitra_is_online, md.certificate_url,
                     p.id as payment_id, p.partner_reff, p.external_id, p.method as payment_method,
                     p.bank_code, p.va_number, p.qris_url, p.amount as payment_amount,
                     p.fee_admin_pg, p.status as payment_status, p.expired_at as payment_expiry,
-                    p.paid_at, p.created_at as payment_created_at
+                    p.paid_at, p.created_at as payment_created_at,
+                    p.payload_request, p.payload_callback
                 FROM orders o
                 LEFT JOIN services s ON o.service_id = s.id
                 LEFT JOIN users u ON o.mitra_id = u.id
@@ -170,6 +171,7 @@ const OrderController = {
                         paid_at: order.paid_at,
                         created_at: order.payment_created_at
                     };
+
                     if (order.payment_method === 'VA' && order.va_number) {
                         paymentDetails.virtual_account = {
                             bank_code: order.bank_code,
@@ -189,6 +191,8 @@ const OrderController = {
                     scheduled_at: order.scheduled_at,
                     note: order.note,
                     duration: order.duration,
+                    transport_fee: parseFloat(order.transport_fee) || 0,
+                    admin_fee: parseFloat(order.admin_fee) || 0,
                     service: {
                         id: order.service_id,
                         name: order.service_name,
@@ -199,6 +203,7 @@ const OrderController = {
                         id: order.mitra_id,
                         name: order.mitra_name,
                         phone: order.mitra_phone,
+                        email: order.mitra_email,
                         profile_pic: order.mitra_profile_pic,
                         rating: mitraRating,
                         is_verified: Boolean(order.mitra_is_verified),
@@ -241,10 +246,18 @@ const OrderController = {
         }
     },
 
-    // 3. GET ORDER BY ID - DIPERBAIKI
+    // 3. GET ORDER BY ID (DENGAN DATA PAYMENT LENGKAP)
     getOrderById: async (req, res) => {
         let connection;
         const { id } = req.params;
+
+        const getBankName = (bankCode) => {
+            const bankMap = {
+                '002': 'BANK BRI', '008': 'BANK MANDIRI', '009': 'BANK BNI',
+                '014': 'BANK BCA', '022': 'BANK CIMB NIAGA', 'qris': 'QRIS'
+            };
+            return bankMap[bankCode] || null;
+        };
 
         try {
             connection = await db.getConnection();
@@ -255,21 +268,25 @@ const OrderController = {
                     u.name as customer_name, 
                     u.phone as customer_phone, 
                     u.email as customer_email,
+                    u.profile_pic as customer_profile_pic,
                     m.name as mitra_name, 
                     m.phone as mitra_phone, 
                     m.email as mitra_email,
-                    s.service_name,
-                    p.method as payment_method,
-                    p.status as payment_status,
-                    p.amount as payment_amount,
-                    p.va_number,
-                    p.qris_url
-                 FROM orders o
-                 LEFT JOIN users u ON o.customer_id = u.id
-                 LEFT JOIN users m ON o.mitra_id = m.id
-                 LEFT JOIN services s ON o.service_id = s.id
-                 LEFT JOIN payments p ON o.id = p.order_id
-                 WHERE o.id = ?`,
+                    m.profile_pic as mitra_profile_pic,
+                    s.service_name, s.description as service_description,
+                    md.specialization, md.is_verified as mitra_is_verified,
+                    p.id as payment_id, p.partner_reff, p.external_id, p.method as payment_method,
+                    p.bank_code, p.va_number, p.qris_url, p.amount as payment_amount,
+                    p.fee_admin_pg, p.status as payment_status, p.expired_at as payment_expiry,
+                    p.paid_at, p.created_at as payment_created_at,
+                    p.payload_request, p.payload_callback
+                FROM orders o
+                LEFT JOIN users u ON o.customer_id = u.id
+                LEFT JOIN users m ON o.mitra_id = m.id
+                LEFT JOIN services s ON o.service_id = s.id
+                LEFT JOIN mitra_details md ON m.id = md.user_id
+                LEFT JOIN payments p ON o.id = p.order_id
+                WHERE o.id = ?`,
                 [id]
             );
 
@@ -280,10 +297,96 @@ const OrderController = {
                 });
             }
 
+            const order = orders[0];
+
+            // Format payment details
+            let paymentDetails = null;
+            if (order.payment_id || order.partner_reff) {
+                paymentDetails = {
+                    id: order.payment_id,
+                    partner_reff: order.partner_reff,
+                    external_id: order.external_id,
+                    method: order.payment_method,
+                    status: order.payment_status,
+                    amount: parseFloat(order.payment_amount) || parseFloat(order.total_amount),
+                    fee_admin: parseFloat(order.fee_admin_pg) || 0,
+                    expired_at: order.payment_expiry,
+                    paid_at: order.paid_at,
+                    created_at: order.payment_created_at
+                };
+
+                if (order.payment_method === 'VA' && order.va_number) {
+                    paymentDetails.virtual_account = {
+                        bank_code: order.bank_code,
+                        bank_name: getBankName(order.bank_code),
+                        va_number: order.va_number
+                    };
+                } else if (order.payment_method === 'QR' && order.qris_url) {
+                    paymentDetails.qris = { qris_url: order.qris_url };
+                }
+            }
+
+            // Get mitra rating
+            let mitraRating = 0;
+            if (order.mitra_id) {
+                const [ratingResult] = await connection.query(
+                    "SELECT COALESCE(AVG(rating), 0) as avg_rating FROM reviews WHERE mitra_id = ?",
+                    [order.mitra_id]
+                );
+                mitraRating = parseFloat(ratingResult[0]?.avg_rating) || 0;
+            }
+
+            // Format response
+            const formattedOrder = {
+                id: order.id,
+                order_code: order.order_code,
+                status: order.status,
+                total_amount: parseFloat(order.total_amount),
+                transport_fee: parseFloat(order.transport_fee) || 0,
+                admin_fee: parseFloat(order.admin_fee) || 0,
+                scheduled_at: order.scheduled_at,
+                note: order.note,
+                duration: order.duration,
+                customer: {
+                    id: order.customer_id,
+                    name: order.customer_name,
+                    phone: order.customer_phone,
+                    email: order.customer_email,
+                    profile_pic: order.customer_profile_pic
+                },
+                mitra: order.mitra_id ? {
+                    id: order.mitra_id,
+                    name: order.mitra_name,
+                    phone: order.mitra_phone,
+                    email: order.mitra_email,
+                    profile_pic: order.mitra_profile_pic,
+                    rating: mitraRating,
+                    is_verified: Boolean(order.mitra_is_verified),
+                    specialization: order.specialization
+                } : null,
+                service: {
+                    id: order.service_id,
+                    name: order.service_name,
+                    description: order.service_description
+                },
+                location: {
+                    address_google: order.address_google,
+                    address_detail: order.address_detail,
+                    latitude: order.latitude_dest ? parseFloat(order.latitude_dest) : null,
+                    longitude: order.longitude_dest ? parseFloat(order.longitude_dest) : null
+                },
+                payment: paymentDetails,
+                confirmed_at_mitra: order.confirmed_at_mitra,
+                confirmed_at_customer: order.confirmed_at_customer,
+                created_at: order.created_at,
+                updated_at: order.updated_at
+            };
+
             return res.json({
                 success: true,
-                data: orders[0]
+                data: formattedOrder
             });
+
         } catch (error) {
             console.error('Error in getOrderById:', error);
             return res.status(500).json({
@@ -295,7 +398,7 @@ const OrderController = {
         }
     },
 
-    // 4. CANCEL ORDER - DIPERBAIKI (status sesuai database)
+    // 4. CANCEL ORDER
     cancelOrder: async (req, res) => {
         let connection;
         const { id } = req.params;
@@ -318,7 +421,6 @@ const OrderController = {
                 });
             }
 
-            // Status yang bisa dibatalkan: pending_payment
             const allowedStatus = ['pending_payment'];
             if (!allowedStatus.includes(order[0].status)) {
                 await connection.rollback();
@@ -331,6 +433,12 @@ const OrderController = {
             await connection.query(
                 'UPDATE orders SET status = ? WHERE id = ?',
                 ['cancelled', id]
+            );
+
+            // Update payment status if exists
+            await connection.query(
+                'UPDATE payments SET status = ? WHERE order_id = ?',
+                ['FAILED', id]
             );
 
             await connection.commit();
@@ -351,40 +459,46 @@ const OrderController = {
         }
     },
 
-    // 5. GET ALL ORDERS (ADMIN ONLY) - DIPERBAIKI
+    // 5. GET ALL ORDERS (ADMIN ONLY) - DENGAN DATA PAYMENT
     getAllOrders: async (req, res) => {
         let connection;
-        const { page = 1, limit = 10 } = req.query;
+        const { page = 1, limit = 10, status } = req.query;
         const offset = (page - 1) * limit;
 
         try {
             connection = await db.getConnection();
 
-            // Get total count
-            const [countResult] = await connection.query(`
-                SELECT COUNT(*) as total FROM orders
-            `);
-            const total = countResult[0].total;
-
-            // Get paginated orders
-            const [orders] = await connection.query(`
+            let countQuery = `SELECT COUNT(*) as total FROM orders o`;
+            let dataQuery = `
                 SELECT 
-                    o.id,
-                    o.order_code,
-                    o.status,
-                    o.total_amount,
-                    o.created_at,
-                    o.scheduled_at,
-                    u.name as customer_name,
-                    u.email as customer_email,
-                    m.name as mitra_name,
-                    m.email as mitra_email
+                    o.id, o.order_code, o.status, o.total_amount, o.created_at, o.scheduled_at,
+                    u.name as customer_name, u.email as customer_email, u.phone as customer_phone,
+                    m.name as mitra_name, m.email as mitra_email, m.phone as mitra_phone,
+                    p.id as payment_id, p.method as payment_method, p.status as payment_status,
+                    p.amount as payment_amount, p.paid_at
                 FROM orders o
                 LEFT JOIN users u ON o.customer_id = u.id
                 LEFT JOIN users m ON o.mitra_id = m.id
-                ORDER BY o.created_at DESC
-                LIMIT ? OFFSET ?
-            `, [parseInt(limit), offset]);
+                LEFT JOIN payments p ON o.id = p.order_id
+            `;
+
+            const queryParams = [];
+
+            if (status && status !== 'all') {
+                countQuery += ` WHERE o.status = ?`;
+                dataQuery += ` WHERE o.status = ?`;
+                queryParams.push(status);
+            }
+
+            // Get total count
+            const [countResult] = await connection.query(countQuery, queryParams);
+            const total = countResult[0].total;
+
+            // Get paginated orders
+            dataQuery += ` ORDER BY o.created_at DESC LIMIT ? OFFSET ?`;
+            queryParams.push(parseInt(limit), offset);
+
+            const [orders] = await connection.query(dataQuery, queryParams);
 
             return res.json({
                 success: true,
@@ -409,7 +523,7 @@ const OrderController = {
         }
     },
 
-    // 6. GET ORDER STATISTICS (ADMIN ONLY) - DIPERBAIKI
+    // 6. GET ORDER STATISTICS (ADMIN ONLY) - DENGAN DATA PAYMENT
     getOrderStatistics: async (req, res) => {
         let connection;
 
@@ -419,33 +533,49 @@ const OrderController = {
             // Overview statistics
             const [overview] = await connection.query(`
                 SELECT 
-                    COUNT(*) as total_orders,
-                    COALESCE(SUM(CASE WHEN status = 'completed' THEN total_amount ELSE 0 END), 0) as total_revenue,
-                    COALESCE(AVG(CASE WHEN status = 'completed' THEN total_amount ELSE NULL END), 0) as avg_order_value
-                FROM orders
+                    COUNT(DISTINCT o.id) as total_orders,
+                    COALESCE(SUM(CASE WHEN o.status = 'completed' THEN o.total_amount ELSE 0 END), 0) as total_revenue,
+                    COALESCE(AVG(CASE WHEN o.status = 'completed' THEN o.total_amount ELSE NULL END), 0) as avg_order_value,
+                    COALESCE(SUM(CASE WHEN p.status = 'SUCCESS' THEN p.amount ELSE 0 END), 0) as total_payment_success,
+                    COALESCE(SUM(CASE WHEN p.status = 'PENDING' THEN p.amount ELSE 0 END), 0) as total_payment_pending
+                FROM orders o
+                LEFT JOIN payments p ON o.id = p.order_id
             `);
 
-            // Status breakdown
+            // Status breakdown for orders
             const [byStatus] = await connection.query(`
                 SELECT 
-                    status,
+                    o.status,
                     COUNT(*) as total,
-                    COALESCE(SUM(total_amount), 0) as total_amount
-                FROM orders
-                GROUP BY status
+                    COALESCE(SUM(o.total_amount), 0) as total_amount
+                FROM orders o
+                GROUP BY o.status
+                ORDER BY total DESC
+            `);
+
+            // Payment status breakdown
+            const [byPaymentStatus] = await connection.query(`
+                SELECT 
+                    p.status,
+                    COUNT(*) as total,
+                    COALESCE(SUM(p.amount), 0) as total_amount
+                FROM payments p
+                GROUP BY p.status
                 ORDER BY total DESC
             `);
 
             // Monthly statistics (last 12 months)
             const [monthly] = await connection.query(`
                 SELECT 
-                    DATE_FORMAT(created_at, '%Y-%m') as month,
-                    COUNT(*) as total_orders,
-                    COALESCE(SUM(total_amount), 0) as total_revenue,
-                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_orders
-                FROM orders
-                WHERE created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
-                GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+                    DATE_FORMAT(o.created_at, '%Y-%m') as month,
+                    COUNT(DISTINCT o.id) as total_orders,
+                    COALESCE(SUM(CASE WHEN o.status = 'completed' THEN o.total_amount ELSE 0 END), 0) as total_revenue,
+                    SUM(CASE WHEN o.status = 'completed' THEN 1 ELSE 0 END) as completed_orders,
+                    COALESCE(SUM(CASE WHEN p.status = 'SUCCESS' THEN p.amount ELSE 0 END), 0) as payment_success
+                FROM orders o
+                LEFT JOIN payments p ON o.id = p.order_id
+                WHERE o.created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+                GROUP BY DATE_FORMAT(o.created_at, '%Y-%m')
                 ORDER BY month DESC
             `);
 
@@ -454,6 +584,7 @@ const OrderController = {
                 data: {
                     overview: overview[0],
                     by_status: byStatus,
+                    by_payment_status: byPaymentStatus,
                     monthly: monthly
                 }
             });
@@ -468,13 +599,12 @@ const OrderController = {
         }
     },
 
-    // 7. UPDATE ORDER STATUS (ADMIN ONLY) - DIPERBAIKI
+    // 7. UPDATE ORDER STATUS (ADMIN ONLY)
     updateOrderStatus: async (req, res) => {
         let connection;
         const { id } = req.params;
         const { status } = req.body;
 
-        // Valid status sesuai dengan enum di database
         const validStatuses = [
             'pending_payment', 'pending', 'paid', 'otw',
             'ongoing', 'completed', 'cancelled', 'released'
@@ -509,6 +639,14 @@ const OrderController = {
                 [status, id]
             );
 
+            // Update payment status jika order status berubah menjadi completed
+            if (status === 'completed') {
+                await connection.query(
+                    'UPDATE payments SET status = ? WHERE order_id = ? AND status != "SUCCESS"',
+                    ['SUCCESS', id]
+                );
+            }
+
             await connection.commit();
 
             return res.json({
@@ -519,6 +657,98 @@ const OrderController = {
         } catch (error) {
             if (connection) await connection.rollback();
             console.error('Error in updateOrderStatus:', error);
+            return res.status(500).json({
+                success: false,
+                message: error.message
+            });
+        } finally {
+            if (connection) connection.release();
+        }
+    },
+
+    // 8. GET ORDERS BY MITRA (DENGAN DATA PAYMENT LENGKAP)
+    getOrdersByMitra: async (req, res) => {
+        let connection;
+        const { mitra_id } = req.params;
+
+        try {
+            connection = await db.getConnection();
+
+            const query = `
+                SELECT 
+                    o.id, o.order_code, o.status, o.total_amount, o.scheduled_at,
+                    o.service_id, o.duration, o.created_at, o.address_google, o.address_detail,
+                    o.latitude_dest, o.longitude_dest, o.customer_id, o.confirmed_at_mitra,
+                    o.confirmed_at_customer, o.note, o.transport_fee, o.admin_fee,
+                    s.service_name, s.description as service_description,
+                    u.name as customer_name, u.phone as customer_phone, u.email as customer_email,
+                    u.profile_pic as customer_profile_pic,
+                    p.id as payment_id, p.partner_reff, p.external_id, p.method as payment_method,
+                    p.bank_code, p.va_number, p.qris_url, p.amount as payment_amount,
+                    p.fee_admin_pg, p.status as payment_status, p.expired_at as payment_expiry,
+                    p.paid_at, p.created_at as payment_created_at
+                FROM orders o
+                LEFT JOIN services s ON o.service_id = s.id
+                LEFT JOIN users u ON o.customer_id = u.id
+                LEFT JOIN payments p ON o.id = p.order_id
+                WHERE o.mitra_id = ?
+                ORDER BY o.created_at DESC
+            `;
+
+            const [orders] = await connection.query(query, [mitra_id]);
+
+            const formattedOrders = orders.map(order => {
+                let paymentDetails = null;
+                if (order.payment_id) {
+                    paymentDetails = {
+                        id: order.payment_id,
+                        partner_reff: order.partner_reff,
+                        external_id: order.external_id,
+                        method: order.payment_method,
+                        status: order.payment_status,
+                        amount: parseFloat(order.payment_amount) || parseFloat(order.total_amount),
+                        expired_at: order.payment_expiry,
+                        paid_at: order.paid_at
+                    };
+                }
+
+                return {
+                    id: order.id,
+                    order_code: order.order_code,
+                    status: order.status,
+                    total_amount: parseFloat(order.total_amount),
+                    scheduled_at: order.scheduled_at,
+                    duration: order.duration,
+                    customer: {
+                        id: order.customer_id,
+                        name: order.customer_name,
+                        phone: order.customer_phone,
+                        email: order.customer_email,
+                        profile_pic: order.customer_profile_pic
+                    },
+                    service: {
+                        id: order.service_id,
+                        name: order.service_name
+                    },
+                    location: {
+                        address: order.address_google,
+                        detail: order.address_detail
+                    },
+                    payment: paymentDetails,
+                    created_at: order.created_at
+                };
+            });
+
+            return res.json({
+                success: true,
+                data: {
+                    total: formattedOrders.length,
+                    orders: formattedOrders
+                }
+            });
+
+        } catch (error) {
+            console.error('Error in getOrdersByMitra:', error);
             return res.status(500).json({
                 success: false,
                 message: error.message
