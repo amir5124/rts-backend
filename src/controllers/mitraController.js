@@ -1,11 +1,9 @@
 const db = require('../config/db');
-const bcrypt = require('bcrypt'); // Jangan lupa install: npm install bcrypt
+const bcrypt = require('bcrypt');
 const notificationService = require('../services/notificationService');
 
 const mitraController = {
 
-    // Registrasi Mitra Baru (tanpa name, email, phone - karena akan diambil dari token/login)
-    // Asumsi: user sudah login dan user_id didapat dari token JWT
     // Registrasi Mitra Baru
     registerMitra: async (req, res) => {
         let connection;
@@ -27,7 +25,6 @@ const mitraController = {
                 bank_account_name
             } = req.body;
 
-            // Validasi required fields
             if (!user_id || !specialization || !address) {
                 return res.status(400).json({
                     success: false,
@@ -38,7 +35,6 @@ const mitraController = {
             connection = await db.getConnection();
             await connection.beginTransaction();
 
-            // Cek apakah user exists dan role-nya mitra
             const [userCheck] = await connection.query(
                 'SELECT id, role FROM users WHERE id = ? AND role = "mitra"',
                 [user_id]
@@ -52,7 +48,6 @@ const mitraController = {
                 });
             }
 
-            // Cek apakah mitra sudah terdaftar
             const [mitraCheck] = await connection.query(
                 'SELECT id FROM mitra_details WHERE user_id = ?',
                 [user_id]
@@ -66,28 +61,25 @@ const mitraController = {
                 });
             }
 
-            // Proses specialization (bisa array atau string)
             let specializationValue = specialization;
             if (Array.isArray(specialization)) {
                 specializationValue = JSON.stringify(specialization);
             }
 
-            // Proses working_days
             let workingDaysValue = working_days;
             if (Array.isArray(working_days)) {
                 workingDaysValue = JSON.stringify(working_days);
             }
 
-            // Insert ke tabel mitra_details
             const mitraQuery = `
-            INSERT INTO mitra_details (
-                user_id, specialization, certificate_url, address,
-                address_latitude, address_longitude, service_radius_km, 
-                working_days, working_start, working_end,
-                bank_name, bank_account_number, bank_account_name, 
-                is_verified, is_online
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
-        `;
+                INSERT INTO mitra_details (
+                    user_id, specialization, certificate_url, address,
+                    address_latitude, address_longitude, service_radius_km, 
+                    working_days, working_start, working_end,
+                    bank_name, bank_account_number, bank_account_name, 
+                    is_verified, is_online
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+            `;
 
             await connection.query(mitraQuery, [
                 user_id,
@@ -137,7 +129,7 @@ const mitraController = {
             if (connection) connection.release();
         }
     },
-    // NEW: Check status registrasi mitra
+
     // Check status registrasi mitra
     checkMitraStatus: async (req, res) => {
         let connection;
@@ -146,7 +138,6 @@ const mitraController = {
         try {
             connection = await db.getConnection();
 
-            // Cek apakah user adalah mitra
             const [userCheck] = await connection.query(
                 'SELECT id, role FROM users WHERE id = ? AND role = "mitra"',
                 [user_id]
@@ -164,19 +155,13 @@ const mitraController = {
                 });
             }
 
-            // Cek data mitra_details (tanpa created_at dan updated_at)
             const [mitraData] = await connection.query(
-                `SELECT 
-                is_verified, 
-                is_online, 
-                specialization
-            FROM mitra_details 
-            WHERE user_id = ?`,
+                `SELECT is_verified, is_online, specialization
+                 FROM mitra_details WHERE user_id = ?`,
                 [user_id]
             );
 
             if (mitraData.length === 0) {
-                // Belum terdaftar sebagai mitra
                 return res.json({
                     success: true,
                     data: {
@@ -187,22 +172,16 @@ const mitraController = {
                 });
             }
 
-            // Sudah terdaftar
             const mitra = mitraData[0];
-
-            // Parse specialization jika berupa JSON string
             let specialization = mitra.specialization;
+
             if (specialization) {
                 try {
-                    // Coba parse jika string
-                    if (typeof specialization === 'string') {
-                        // Cek apakah itu JSON array
-                        if (specialization.startsWith('[')) {
-                            specialization = JSON.parse(specialization);
-                        }
+                    if (typeof specialization === 'string' && specialization.startsWith('[')) {
+                        specialization = JSON.parse(specialization);
                     }
                 } catch (e) {
-                    console.log('Specialization is not JSON, keeping as string:', specialization);
+                    console.log('Specialization is not JSON:', specialization);
                 }
             }
 
@@ -226,6 +205,7 @@ const mitraController = {
             if (connection) connection.release();
         }
     },
+
     // Dapatkan detail mitra berdasarkan user_id
     getMitraDetail: async (req, res) => {
         let connection;
@@ -236,25 +216,11 @@ const mitraController = {
 
             const query = `
                 SELECT 
-                    u.id,
-                    u.name,
-                    u.email,
-                    u.phone,
-                    u.profile_pic,
-                    m.specialization,
-                    m.certificate_url,
-                    m.is_verified,
-                    m.is_online,
-                    m.address,
-                    m.address_latitude,
-                    m.address_longitude,
-                    m.service_radius_km,
-                    m.working_days,
-                    m.working_start,
-                    m.working_end,
-                    m.bank_name,
-                    m.bank_account_number,
-                    m.bank_account_name,
+                    u.id, u.name, u.email, u.phone, u.profile_pic,
+                    m.specialization, m.certificate_url, m.is_verified,
+                    m.is_online, m.address, m.address_latitude, m.address_longitude,
+                    m.service_radius_km, m.working_days, m.working_start,
+                    m.working_end, m.bank_name, m.bank_account_number, m.bank_account_name,
                     COALESCE(AVG(r.rating), 0) as avg_rating
                 FROM users u
                 LEFT JOIN mitra_details m ON u.id = m.user_id
@@ -272,21 +238,16 @@ const mitraController = {
                 });
             }
 
-            // Parse specialization dan working_days jika JSON
             const data = rows[0];
             if (data.specialization && typeof data.specialization === 'string') {
                 try {
                     data.specialization = JSON.parse(data.specialization);
-                } catch (e) {
-                    // Biarkan sebagai string
-                }
+                } catch (e) { }
             }
             if (data.working_days && typeof data.working_days === 'string') {
                 try {
                     data.working_days = JSON.parse(data.working_days);
-                } catch (e) {
-                    // Biarkan sebagai string
-                }
+                } catch (e) { }
             }
 
             res.json({
@@ -305,30 +266,21 @@ const mitraController = {
         }
     },
 
-    // Update profil mitra (hanya mitra_details, update users terpisah)
+    // Update profil mitra
     updateMitraProfile: async (req, res) => {
         let connection;
         const { user_id } = req.params;
         const {
-            specialization,
-            certificate_url,
-            address,
-            address_latitude,
-            address_longitude,
-            service_radius_km,
-            working_days,
-            working_start,
-            working_end,
-            bank_name,
-            bank_account_number,
-            bank_account_name
+            specialization, certificate_url, address, address_latitude,
+            address_longitude, service_radius_km, working_days,
+            working_start, working_end, bank_name,
+            bank_account_number, bank_account_name
         } = req.body;
 
         try {
             connection = await db.getConnection();
             await connection.beginTransaction();
 
-            // Cek apakah mitra exists
             const [mitraCheck] = await connection.query(
                 'SELECT id FROM mitra_details WHERE user_id = ?',
                 [user_id]
@@ -342,12 +294,10 @@ const mitraController = {
                 });
             }
 
-            // Update mitra_details
             const mitraUpdates = [];
             const mitraValues = [];
 
             if (specialization !== undefined) {
-                // Jika specialization adalah array, convert ke JSON string
                 const specializationValue = Array.isArray(specialization)
                     ? JSON.stringify(specialization)
                     : specialization;
@@ -427,7 +377,7 @@ const mitraController = {
         }
     },
 
-    // Update user profile (name, phone, profile_pic)
+    // Update user profile
     updateUserProfile: async (req, res) => {
         let connection;
         const { user_id } = req.params;
@@ -551,12 +501,9 @@ const mitraController = {
 
         try {
             const [rows] = await db.execute(
-                `SELECT 
-                    specialization, address, working_days, 
-                    working_start, working_end, bank_name, 
-                    bank_account_number, bank_account_name
-                FROM mitra_details 
-                WHERE user_id = ?`,
+                `SELECT specialization, address, working_days, working_start, 
+                 working_end, bank_name, bank_account_number, bank_account_name
+                 FROM mitra_details WHERE user_id = ?`,
                 [user_id]
             );
 
@@ -571,8 +518,6 @@ const mitraController = {
             }
 
             const mitra = rows[0];
-
-            // Cek field yang wajib diisi
             const requiredFields = [
                 'specialization', 'address', 'working_days',
                 'working_start', 'working_end', 'bank_name',
@@ -605,7 +550,7 @@ const mitraController = {
         }
     },
 
-    // Get all therapists (verified and online)
+    // Get all therapists
     getAllTherapists: async (req, res) => {
         let connection;
         const { verified, online } = req.query;
@@ -614,23 +559,15 @@ const mitraController = {
             connection = await db.getConnection();
 
             let query = `
-            SELECT 
-                u.id,
-                u.name,
-                u.email,
-                u.phone,
-                u.profile_pic,
-                m.specialization,
-                m.is_verified,
-                m.is_online,
-                m.address,
-                m.service_radius_km,
-                COALESCE(AVG(r.rating), 0) as avg_rating
-            FROM users u
-            JOIN mitra_details m ON u.id = m.user_id
-            LEFT JOIN reviews r ON m.user_id = r.mitra_id
-            WHERE u.role = 'mitra'
-        `;
+                SELECT 
+                    u.id, u.name, u.email, u.phone, u.profile_pic,
+                    m.specialization, m.is_verified, m.is_online,
+                    m.address, m.service_radius_km, COALESCE(AVG(r.rating), 0) as avg_rating
+                FROM users u
+                JOIN mitra_details m ON u.id = m.user_id
+                LEFT JOIN reviews r ON m.user_id = r.mitra_id
+                WHERE u.role = 'mitra'
+            `;
 
             const queryParams = [];
 
@@ -672,32 +609,23 @@ const mitraController = {
             connection = await db.getConnection();
 
             const query = `
-            SELECT 
-                u.id,
-                u.name,
-                u.email,
-                u.phone,
-                u.profile_pic,
-                m.specialization,
-                m.is_verified,
-                m.is_online,
-                m.address,
-                m.service_radius_km,
-                COALESCE(AVG(r.rating), 0) as avg_rating
-            FROM users u
-            JOIN mitra_details m ON u.id = m.user_id
-            LEFT JOIN reviews r ON m.user_id = r.mitra_id
-            WHERE u.role = 'mitra' 
-            AND m.is_verified = 1 
-            AND m.is_online = 1
-            AND JSON_SEARCH(m.specialization, 'all', (SELECT service_name FROM services WHERE id = ?)) IS NOT NULL
-            GROUP BY u.id
-            ORDER BY avg_rating DESC
-        `;
+                SELECT 
+                    u.id, u.name, u.email, u.phone, u.profile_pic,
+                    m.specialization, m.is_verified, m.is_online,
+                    m.address, m.service_radius_km, COALESCE(AVG(r.rating), 0) as avg_rating
+                FROM users u
+                JOIN mitra_details m ON u.id = m.user_id
+                LEFT JOIN reviews r ON m.user_id = r.mitra_id
+                WHERE u.role = 'mitra' 
+                AND m.is_verified = 1 
+                AND m.is_online = 1
+                AND JSON_SEARCH(m.specialization, 'all', (SELECT service_name FROM services WHERE id = ?)) IS NOT NULL
+                GROUP BY u.id
+                ORDER BY avg_rating DESC
+            `;
 
             const [rows] = await connection.query(query, [service_id]);
 
-            // Parse specialization
             const therapists = rows.map(therapist => {
                 if (typeof therapist.specialization === 'string') {
                     try {
@@ -726,7 +654,7 @@ const mitraController = {
         }
     },
 
-    // Approve mitra registration (Admin only)
+    // Approve mitra registration (Admin only) - DENGAN NOTIFIKASI
     approveMitra: async (req, res) => {
         let connection;
         const { user_id } = req.params;
@@ -739,9 +667,9 @@ const mitraController = {
             // Cek apakah mitra exists dan ambil data user
             const [mitraCheck] = await connection.query(
                 `SELECT md.id, md.is_verified, u.name, u.email 
-             FROM mitra_details md 
-             JOIN users u ON md.user_id = u.id 
-             WHERE md.user_id = ?`,
+                 FROM mitra_details md 
+                 JOIN users u ON md.user_id = u.id 
+                 WHERE md.user_id = ?`,
                 [user_id]
             );
 
@@ -754,6 +682,7 @@ const mitraController = {
             }
 
             const mitraName = mitraCheck[0].name || 'Mitra';
+            const oldStatus = mitraCheck[0].is_verified;
 
             // Update status verifikasi
             await connection.query(
@@ -763,7 +692,7 @@ const mitraController = {
 
             let notificationSent = false;
 
-            // Cek apakah tabel notifications ada sebelum insert
+            // Cek apakah tabel notifications ada
             const [tableCheck] = await connection.query(
                 "SHOW TABLES LIKE 'notifications'"
             );
@@ -771,39 +700,46 @@ const mitraController = {
             if (tableCheck.length === 0) {
                 console.warn('⚠️ Tabel notifications belum dibuat, skip insert notifikasi');
             } else {
-                // Jika diverifikasi, kirim notifikasi APPROVE
-                if (is_verified) {
-                    // 1. Simpan notifikasi ke database
+                // Kirim notifikasi berdasarkan aksi
+                if (is_verified && oldStatus === 0) {
+                    // Verifikasi mitra
                     await connection.query(
                         `INSERT INTO notifications (user_id, title, message, type, is_read) 
-                     VALUES (?, ?, ?, ?, 0)`,
+                         VALUES (?, ?, ?, ?, 0)`,
                         [user_id,
                             '✅ Akun Diverifikasi',
                             'Selamat! Akun mitra Anda telah diverifikasi. Anda sekarang dapat mulai menerima pesanan.',
                             'verification']
                     );
 
-                    // 2. Kirim PUSH NOTIFICATION (opsional)
                     try {
-                        const notificationService = require('../services/notificationService');
                         const pushResult = await notificationService.sendVerificationNotification(user_id, mitraName);
                         notificationSent = pushResult.success;
-                        console.log(`Push notification for user ${user_id}:`, pushResult);
                     } catch (pushError) {
-                        console.error('Push notification error (non-blocking):', pushError.message);
+                        console.error('Push notification error:', pushError.message);
                     }
 
-                } else {
-                    // Jika ditolak
-                    const rejectMessage = rejection_reason
-                        ? `Pendaftaran mitra ditolak. Alasan: ${rejection_reason}`
-                        : 'Pendaftaran mitra ditolak. Silakan hubungi admin.';
+                } else if (!is_verified && oldStatus === 1) {
+                    // Pembatalan verifikasi (unverify)
+                    const unverifyMessage = rejection_reason
+                        ? `Verifikasi akun mitra Anda dibatalkan. Alasan: ${rejection_reason}`
+                        : 'Verifikasi akun mitra Anda telah dibatalkan. Silakan hubungi admin untuk informasi lebih lanjut.';
 
                     await connection.query(
                         `INSERT INTO notifications (user_id, title, message, type, is_read) 
-                     VALUES (?, ?, ?, ?, 0)`,
-                        [user_id, '❌ Pendaftaran Ditolak', rejectMessage, 'rejection']
+                         VALUES (?, ?, ?, ?, 0)`,
+                        [user_id,
+                            '⚠️ Verifikasi Dibatalkan',
+                            unverifyMessage,
+                            'warning']
                     );
+
+                    try {
+                        const pushResult = await notificationService.sendUnverificationNotification(user_id, mitraName, rejection_reason);
+                        notificationSent = pushResult.success;
+                    } catch (pushError) {
+                        console.error('Push notification error:', pushError.message);
+                    }
                 }
             }
 
@@ -824,7 +760,6 @@ const mitraController = {
             if (connection) await connection.rollback();
             console.error('❌ Approve Mitra Error:', error);
 
-            // Error handling yang lebih spesifik
             if (error.code === 'ER_NO_SUCH_TABLE') {
                 return res.status(500).json({
                     success: false,
@@ -843,6 +778,7 @@ const mitraController = {
         }
     },
 
+    // Get all mitra registrations
     getAllMitraRegistrations: async (req, res) => {
         let connection;
         const { status, search } = req.query;
@@ -850,47 +786,26 @@ const mitraController = {
         try {
             connection = await db.getConnection();
 
-            // Query dasar untuk mengambil semua data mitra
             let query = `
                 SELECT 
-                    u.id as user_id,
-                    u.name,
-                    u.email,
-                    u.phone,
-                    u.profile_pic,
-                    u.created_at as user_created_at,
-                    m.id as mitra_id,
-                    m.specialization,
-                    m.certificate_url,
-                    m.is_verified,
-                    m.address,
-                    m.address_latitude,
-                    m.address_longitude,
-                    m.service_radius_km,
-                    m.working_days,
-                    m.working_start,
-                    m.working_end,
-                    m.bank_name,
-                    m.bank_account_number,
-                    m.bank_account_name,
-                    u.created_at as mitra_registered_at,
+                    u.id as user_id, u.name, u.email, u.phone, u.profile_pic,
+                    u.created_at as user_created_at, m.id as mitra_id,
+                    m.specialization, m.certificate_url, m.is_verified,
+                    m.address, m.address_latitude, m.address_longitude,
+                    m.service_radius_km, m.working_days, m.working_start,
+                    m.working_end, m.bank_name, m.bank_account_number,
+                    m.bank_account_name, u.created_at as mitra_registered_at,
                     COALESCE(
                         (SELECT JSON_ARRAYAGG(
                             JSON_OBJECT(
-                                'id', o.id,
-                                'total_amount', o.total_amount,
-                                'status', o.status,
-                                'scheduled_at', o.scheduled_at
+                                'id', o.id, 'total_amount', o.total_amount,
+                                'status', o.status, 'scheduled_at', o.scheduled_at
                             )
                         ) FROM orders o WHERE o.mitra_id = m.user_id LIMIT 5),
                         JSON_ARRAY()
                     ) as recent_orders,
-                    (
-                        SELECT COUNT(*) FROM orders WHERE mitra_id = m.user_id
-                    ) as total_orders,
-                    (
-                        SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE mitra_id = m.user_id
-                    ) as avg_rating
+                    (SELECT COUNT(*) FROM orders WHERE mitra_id = m.user_id) as total_orders,
+                    (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE mitra_id = m.user_id) as avg_rating
                 FROM users u
                 INNER JOIN mitra_details m ON u.id = m.user_id
                 WHERE u.role = 'mitra'
@@ -898,49 +813,36 @@ const mitraController = {
 
             const queryParams = [];
 
-            // Filter berdasarkan status verifikasi
-            // Status 'pending' = menunggu verifikasi (is_verified = 0)
-            // Status 'verified' = sudah terverifikasi (is_verified = 1)
-            // Status 'all' atau tidak ada status = tampilkan semua
             if (status === 'pending') {
                 query += ` AND m.is_verified = 0`;
             } else if (status === 'verified') {
                 query += ` AND m.is_verified = 1`;
             }
-            // Jika status === 'all' atau status undefined, tidak perlu menambahkan filter
 
-            // Filter pencarian berdasarkan nama, email, atau telepon
             if (search && search.trim() !== '') {
                 query += ` AND (u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)`;
                 const searchPattern = `%${search.trim()}%`;
                 queryParams.push(searchPattern, searchPattern, searchPattern);
             }
 
-            // Urutkan berdasarkan tanggal pendaftaran terbaru
             query += ` ORDER BY u.created_at DESC`;
 
-            // Eksekusi query
             const [rows] = await connection.query(query, queryParams);
 
-            // Parse JSON fields untuk setiap baris data
             const registrations = rows.map(row => {
-                // Parse specialization dari JSON string ke array
                 if (row.specialization && typeof row.specialization === 'string') {
                     try {
                         row.specialization = JSON.parse(row.specialization);
-                        // Pastikan hasil parsing adalah array
                         if (!Array.isArray(row.specialization)) {
                             row.specialization = [row.specialization];
                         }
                     } catch (e) {
-                        console.log('Specialization parse error:', e.message);
                         row.specialization = [row.specialization];
                     }
                 } else if (!row.specialization) {
                     row.specialization = [];
                 }
 
-                // Parse working_days dari JSON string ke array
                 if (row.working_days && typeof row.working_days === 'string') {
                     try {
                         row.working_days = JSON.parse(row.working_days);
@@ -948,14 +850,12 @@ const mitraController = {
                             row.working_days = [row.working_days];
                         }
                     } catch (e) {
-                        console.log('Working days parse error:', e.message);
                         row.working_days = [row.working_days];
                     }
                 } else if (!row.working_days) {
                     row.working_days = [];
                 }
 
-                // Parse recent_orders dari JSON string ke array
                 if (row.recent_orders && typeof row.recent_orders === 'string') {
                     try {
                         row.recent_orders = JSON.parse(row.recent_orders);
@@ -963,14 +863,12 @@ const mitraController = {
                             row.recent_orders = [];
                         }
                     } catch (e) {
-                        console.log('Recent orders parse error:', e.message);
                         row.recent_orders = [];
                     }
                 } else if (!row.recent_orders) {
                     row.recent_orders = [];
                 }
 
-                // Konversi nilai ke tipe yang sesuai
                 row.total_orders = parseInt(row.total_orders) || 0;
                 row.avg_rating = parseFloat(row.avg_rating) || 0;
                 row.is_verified = parseInt(row.is_verified) || 0;
@@ -979,14 +877,12 @@ const mitraController = {
                 return row;
             });
 
-            // Hitung statistik berdasarkan data yang sudah difilter
             const stats = {
                 total: registrations.length,
                 pending: registrations.filter(r => r.is_verified === 0).length,
                 verified: registrations.filter(r => r.is_verified === 1).length
             };
 
-            // Kirim response
             res.json({
                 success: true,
                 message: 'Data mitra berhasil diambil',
@@ -1001,8 +897,6 @@ const mitraController = {
 
         } catch (error) {
             console.error('❌ Get All Mitra Registrations Error:', error);
-
-            // Error handling yang lebih spesifik
             let errorMessage = 'Terjadi kesalahan pada server';
             let statusCode = 500;
 
@@ -1024,6 +918,7 @@ const mitraController = {
             if (connection) connection.release();
         }
     },
+
     // Get detailed mitra registration by ID
     getMitraRegistrationDetail: async (req, res) => {
         let connection;
@@ -1034,33 +929,15 @@ const mitraController = {
 
             const query = `
                 SELECT 
-                    u.id as user_id,
-                    u.name,
-                    u.email,
-                    u.phone,
-                    u.profile_pic,
-                    u.created_at as user_created_at,
-                    m.id as mitra_id,
-                    m.specialization,
-                    m.certificate_url,
-                    m.is_verified,
-                    m.address,
-                    m.address_latitude,
-                    m.address_longitude,
-                    m.service_radius_km,
-                    m.working_days,
-                    m.working_start,
-                    m.working_end,
-                    m.bank_name,
-                    m.bank_account_number,
-                    m.bank_account_name,
-                    u.created_at as mitra_registered_at,
-                    (
-                        SELECT COUNT(*) FROM orders WHERE mitra_id = m.user_id
-                    ) as total_orders,
-                    (
-                        SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE mitra_id = m.user_id
-                    ) as avg_rating
+                    u.id as user_id, u.name, u.email, u.phone, u.profile_pic,
+                    u.created_at as user_created_at, m.id as mitra_id,
+                    m.specialization, m.certificate_url, m.is_verified,
+                    m.address, m.address_latitude, m.address_longitude,
+                    m.service_radius_km, m.working_days, m.working_start,
+                    m.working_end, m.bank_name, m.bank_account_number,
+                    m.bank_account_name, u.created_at as mitra_registered_at,
+                    (SELECT COUNT(*) FROM orders WHERE mitra_id = m.user_id) as total_orders,
+                    (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE mitra_id = m.user_id) as avg_rating
                 FROM users u
                 INNER JOIN mitra_details m ON u.id = m.user_id
                 WHERE u.id = ? AND u.role = 'mitra'
@@ -1077,7 +954,6 @@ const mitraController = {
 
             const mitra = rows[0];
 
-            // Parse JSON fields
             if (mitra.specialization && typeof mitra.specialization === 'string') {
                 try {
                     mitra.specialization = JSON.parse(mitra.specialization);
@@ -1089,7 +965,6 @@ const mitraController = {
                 } catch (e) { }
             }
 
-            // Convert decimal to number
             mitra.total_orders = parseInt(mitra.total_orders) || 0;
             mitra.avg_rating = parseFloat(mitra.avg_rating) || 0;
 
@@ -1109,7 +984,8 @@ const mitraController = {
             if (connection) connection.release();
         }
     },
-    // Delete mitra (admin only)
+
+    // Delete mitra (admin only) - DENGAN NOTIFIKASI
     deleteMitra: async (req, res) => {
         let connection;
         const { user_id } = req.params;
@@ -1118,13 +994,16 @@ const mitraController = {
             connection = await db.getConnection();
             await connection.beginTransaction();
 
-            // Cek apakah mitra exists
-            const [mitraCheck] = await connection.query(
-                'SELECT user_id FROM mitra_details WHERE user_id = ?',
+            // Ambil data mitra sebelum dihapus untuk notifikasi
+            const [mitraData] = await connection.query(
+                `SELECT u.name, u.email, m.is_verified 
+                 FROM users u 
+                 JOIN mitra_details m ON u.id = m.user_id 
+                 WHERE u.id = ?`,
                 [user_id]
             );
 
-            if (mitraCheck.length === 0) {
+            if (mitraData.length === 0) {
                 await connection.rollback();
                 return res.status(404).json({
                     success: false,
@@ -1132,11 +1011,35 @@ const mitraController = {
                 });
             }
 
+            const mitraName = mitraData[0].name || 'Mitra';
+
+            // Kirim notifikasi sebelum menghapus/disable akun
+            const [tableCheck] = await connection.query(
+                "SHOW TABLES LIKE 'notifications'"
+            );
+
+            if (tableCheck.length > 0) {
+                await connection.query(
+                    `INSERT INTO notifications (user_id, title, message, type, is_read) 
+                     VALUES (?, ?, ?, ?, 0)`,
+                    [user_id,
+                        '🗑️ Akun Mitra Dinonaktifkan',
+                        `Akun mitra Anda telah dinonaktifkan oleh administrator. Akun Anda telah diubah menjadi pelanggan. Silakan hubungi admin untuk informasi lebih lanjut.`,
+                        'account_deactivation']
+                );
+
+                // Kirim push notification
+                try {
+                    await notificationService.sendAccountDeactivationNotification(user_id, mitraName);
+                } catch (pushError) {
+                    console.error('Push notification error:', pushError.message);
+                }
+            }
+
             // Soft delete: update status
-            // Gunakan 'customer' karena itu adalah role default untuk non-mitra
             await connection.query(
                 'UPDATE users SET is_active = 0, role = ? WHERE id = ?',
-                ['customer', user_id]  // ← Ganti dari 'user' menjadi 'customer'
+                ['customer', user_id]
             );
 
             await connection.query(
@@ -1152,7 +1055,8 @@ const mitraController = {
                 data: {
                     user_id: user_id,
                     new_role: 'customer',
-                    is_active: false
+                    is_active: false,
+                    notification_sent: true
                 }
             });
 
@@ -1167,6 +1071,7 @@ const mitraController = {
             if (connection) connection.release();
         }
     },
+
     // Dashboard mitra
     getDashboard: async (req, res) => {
         let connection;
@@ -1175,15 +1080,12 @@ const mitraController = {
         try {
             connection = await db.getConnection();
 
-            // Get today's orders
             const [todayOrders] = await connection.query(`
                 SELECT COUNT(*) as count, COALESCE(SUM(total_amount), 0) as total
                 FROM orders 
-                WHERE mitra_id = ? 
-                AND DATE(scheduled_at) = CURDATE()
+                WHERE mitra_id = ? AND DATE(scheduled_at) = CURDATE()
             `, [user_id]);
 
-            // Get monthly orders
             const [monthOrders] = await connection.query(`
                 SELECT COUNT(*) as count, COALESCE(SUM(total_amount), 0) as total
                 FROM orders 
@@ -1192,28 +1094,23 @@ const mitraController = {
                 AND YEAR(scheduled_at) = YEAR(CURDATE())
             `, [user_id]);
 
-            // Get pending orders
             const [pendingOrders] = await connection.query(`
                 SELECT COUNT(*) as count
                 FROM orders 
                 WHERE mitra_id = ? AND status = 'paid'
             `, [user_id]);
 
-            // Get ongoing orders
             const [ongoingOrders] = await connection.query(`
                 SELECT COUNT(*) as count
                 FROM orders 
                 WHERE mitra_id = ? AND status IN ('accepted', 'otw', 'ongoing')
             `, [user_id]);
 
-            // Get mitra rating from reviews table
             const [rating] = await connection.query(`
                 SELECT COALESCE(AVG(rating), 0) as avg_rating
-                FROM reviews 
-                WHERE mitra_id = ?
+                FROM reviews WHERE mitra_id = ?
             `, [user_id]);
 
-            // Get online status
             const [mitraStatus] = await connection.query(`
                 SELECT is_online FROM mitra_details WHERE user_id = ?
             `, [user_id]);
@@ -1242,8 +1139,6 @@ const mitraController = {
             if (connection) connection.release();
         }
     }
-
-
 
 };
 
