@@ -4,6 +4,11 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../config/db');
 
+const UPLOAD_BASE_PATH = process.env.UPLOAD_PATH || '/app/uploads';
+const PROFILES_PATH = path.join(UPLOAD_BASE_PATH, 'profiles');
+
+console.log(`📁 [USER CONTROLLER] PROFILES_PATH: ${PROFILES_PATH}`);
+
 const userController = {
     // 1. Ambil semua User
     getUsers: async (req, res) => {
@@ -93,10 +98,9 @@ const userController = {
             let newProfilePic = currentUser.profile_pic;
 
             if (file) {
-                // Gunakan filename yang sudah di-generate oleh multer
+                // 🔥 PERBAIKAN: Gunakan PROFILES_PATH dari environment
                 const fileName = file.filename;
-                const uploadPath = path.join(__dirname, '../uploads/profiles');
-                const newFilePath = path.join(uploadPath, fileName);
+                const newFilePath = path.join(PROFILES_PATH, fileName);
 
                 console.log(`📸 New file uploaded: ${fileName}`);
                 console.log(`📁 File path: ${newFilePath}`);
@@ -105,15 +109,6 @@ const userController = {
                 if (fs.existsSync(newFilePath)) {
                     console.log(`✅ File saved successfully at: ${newFilePath}`);
                     newProfilePic = fileName;
-
-                    // Hapus file lama (opsional, bisa dibiarkan sebagai backup)
-                    if (currentUser.profile_pic) {
-                        const oldFilePath = path.join(uploadPath, currentUser.profile_pic);
-                        if (fs.existsSync(oldFilePath)) {
-                            console.log(`🗑️ Deleting old profile picture: ${currentUser.profile_pic}`);
-                            // fs.unlinkSync(oldFilePath); // Uncomment jika ingin menghapus file lama
-                        }
-                    }
                 } else {
                     console.warn(`⚠️ File not found at: ${newFilePath}`);
                 }
@@ -175,6 +170,7 @@ const userController = {
             if (connection) connection.release();
         }
     },
+
     // 4. Update Status User (Aktif/Nonaktif)
     updateUserStatus: async (req, res) => {
         try {
