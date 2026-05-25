@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
 const upload = require('../middlewares/uploadMiddleware');
-const { verifyToken, isAdmin } = require('../middlewares/auth');
+const { verifyToken } = require('../middlewares/auth');
 
 /**
  * @route   GET /api/users

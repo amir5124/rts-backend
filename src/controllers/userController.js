@@ -56,67 +56,124 @@ const userController = {
 
     // 3. Edit Profile (Termasuk Foto)
     updateUser: async (req, res) => {
-        try {
-            const id = req.params.id;
-            const currentUser = await User.findById(id);
+        let connection;
+        const userId = req.params.id;
+        const { name, email, phone } = req.body;
+        const file = req.file;
 
-            if (!currentUser) {
+        console.log(`\n========== [UPDATE USER] ==========`);
+        console.log(`📝 User ID: ${userId}`);
+        console.log(`📝 Request body:`, { name, email, phone });
+        console.log(`📝 File uploaded:`, file ? file.filename : 'No file');
+
+        try {
+            connection = await db.getConnection();
+            await connection.beginTransaction();
+
+            // 1. Cek user exists
+            const [users] = await connection.query(
+                'SELECT id, name, email, phone, profile_pic FROM users WHERE id = ?',
+                [userId]
+            );
+
+            if (users.length === 0) {
+                await connection.rollback();
+                console.log(`❌ User ${userId} not found`);
                 return res.status(404).json({
                     success: false,
-                    message: "User tidak ditemukan"
+                    message: 'User tidak ditemukan'
                 });
             }
 
-            let profilePicPath = currentUser.profile_pic;
+            const currentUser = users[0];
+            console.log(`✅ Current user data:`, currentUser);
 
-            // Logika jika ada file foto baru yang diunggah
-            if (req.file) {
-                profilePicPath = req.file.filename;
+            // 2. Handle upload file profile picture
+            let newProfilePic = currentUser.profile_pic;
 
-                // ✅ OPSI 2: Tidak menghapus file lama, hanya mengganti path di database
-                // File lama akan tetap tersimpan di server (tidak masalah untuk storage kecil)
-                console.log(`✅ New profile picture uploaded: ${req.file.filename}`);
-                if (currentUser.profile_pic) {
-                    console.log(`ℹ️ Old profile picture: ${currentUser.profile_pic} (kept as backup)`);
+            if (file) {
+                // Gunakan filename yang sudah di-generate oleh multer
+                const fileName = file.filename;
+                const uploadPath = path.join(__dirname, '../uploads/profiles');
+                const newFilePath = path.join(uploadPath, fileName);
+
+                console.log(`📸 New file uploaded: ${fileName}`);
+                console.log(`📁 File path: ${newFilePath}`);
+
+                // Cek apakah file benar-benar ada
+                if (fs.existsSync(newFilePath)) {
+                    console.log(`✅ File saved successfully at: ${newFilePath}`);
+                    newProfilePic = fileName;
+
+                    // Hapus file lama (opsional, bisa dibiarkan sebagai backup)
+                    if (currentUser.profile_pic) {
+                        const oldFilePath = path.join(uploadPath, currentUser.profile_pic);
+                        if (fs.existsSync(oldFilePath)) {
+                            console.log(`🗑️ Deleting old profile picture: ${currentUser.profile_pic}`);
+                            // fs.unlinkSync(oldFilePath); // Uncomment jika ingin menghapus file lama
+                        }
+                    }
+                } else {
+                    console.warn(`⚠️ File not found at: ${newFilePath}`);
                 }
             }
 
-            const data = {
-                name: req.body.name || currentUser.name,
-                email: req.body.email || currentUser.email,
-                phone: req.body.phone || currentUser.phone,
-                profile_pic: profilePicPath
+            // 3. Update data user
+            const updateData = {
+                name: name || currentUser.name,
+                email: email || currentUser.email,
+                phone: phone || currentUser.phone,
+                profile_pic: newProfilePic
             };
 
-            await User.update(id, data);
+            console.log(`🔄 Updating user ${userId} with:`, updateData);
 
-            // Return full URL untuk frontend
+            await connection.query(
+                `UPDATE users SET 
+                    name = ?, 
+                    email = ?, 
+                    phone = ?, 
+                    profile_pic = ? 
+                 WHERE id = ?`,
+                [updateData.name, updateData.email, updateData.phone, updateData.profile_pic, userId]
+            );
+
+            await connection.commit();
+            console.log(`✅ User ${userId} updated successfully`);
+
+            // 4. Build full URL untuk profile picture
             const baseUrl = `${req.protocol}://${req.get('host')}`;
-            const profilePicUrl = data.profile_pic
-                ? `${baseUrl}/uploads/profiles/${data.profile_pic}`
+            const profilePicUrl = updateData.profile_pic
+                ? `${baseUrl}/uploads/profiles/${updateData.profile_pic}`
                 : null;
 
+            console.log(`🔗 Profile picture URL: ${profilePicUrl}`);
+
+            // 5. Return response
             res.json({
                 success: true,
-                message: "Profile berhasil diperbarui",
+                message: 'Profile berhasil diperbarui',
                 data: {
-                    id: parseInt(id),
-                    name: data.name,
-                    email: data.email,
-                    phone: data.phone,
-                    profile_pic: profilePicUrl
+                    id: parseInt(userId),
+                    name: updateData.name,
+                    email: updateData.email,
+                    phone: updateData.phone,
+                    profile_pic: profilePicUrl,
+                    profile_pic_filename: updateData.profile_pic
                 }
             });
 
-        } catch (err) {
-            console.error('Error in updateUser:', err);
+        } catch (error) {
+            if (connection) await connection.rollback();
+            console.error('❌ Error in updateUser:', error);
             res.status(500).json({
                 success: false,
-                message: err.message
+                message: error.message || 'Terjadi kesalahan pada server'
             });
+        } finally {
+            if (connection) connection.release();
         }
     },
-
     // 4. Update Status User (Aktif/Nonaktif)
     updateUserStatus: async (req, res) => {
         try {
