@@ -142,6 +142,37 @@ class NotificationService {
         return result;
     }
 
+    // services/notificationService.js - Tambahkan method ini
+
+    async sendOrderOtwNotificationToCustomer(customerId, orderId, orderCode, mitraName = 'Mitra') {
+        const validCustomerId = parseInt(customerId);
+        const validOrderId = parseInt(orderId);
+
+        if (isNaN(validCustomerId) || validCustomerId <= 0) {
+            console.error(`❌ Invalid customerId: ${customerId}`);
+            return { success: false, message: 'Invalid customerId' };
+        }
+
+        const notificationData = {
+            title: '🚗 Mitra Dalam Perjalanan',
+            message: `Halo, ${mitraName} sedang dalam perjalanan menuju lokasi Anda untuk pesanan ${orderCode}.`,
+            type: 'order_otw'
+        };
+
+        const additionalData = {
+            screen: 'orders',
+            action: 'track_order',
+            order_id: validOrderId,
+            order_code: orderCode,
+            status: 'otw'
+        };
+
+        const result = await this.sendToUser(validCustomerId, notificationData, additionalData);
+        await this.saveNotificationToDatabase(validCustomerId, notificationData.title, notificationData.message, 'order');
+
+        return result;
+    }
+
     // Kirim notifikasi pesanan baru ke customer (setelah order dibuat)
     async sendOrderCreatedNotificationToCustomer(customerId, orderId, orderCode, totalAmount) {
         const formattedAmount = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(totalAmount);

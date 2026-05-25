@@ -1198,7 +1198,7 @@ const OrderController = {
         }
     },
 
-    // 5. MITRA OTW (ON THE WAY) - TAMBAHKAN
+    // 5. MITRA OTW (ON THE WAY) - DIPERBAIKI
     otwOrder: async (req, res) => {
         let connection;
         const { id } = req.params;
@@ -1206,26 +1206,40 @@ const OrderController = {
 
         console.log(`\n========== [OTW ORDER] ==========`);
         console.log(`📝 Request params.id: ${id}`);
+        console.log(`👤 Mitra ID: ${mitraId}`);
+
+        if (!mitraId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized: Mitra ID tidak ditemukan'
+            });
+        }
 
         try {
             connection = await db.getConnection();
             await connection.beginTransaction();
 
+            // 🔥 PERBAIKAN: Hapus JOIN karena tidak perlu customer_name untuk update
+            // Dan pastikan mitra_id dibandingkan dengan benar (bukan NULL)
             const [orderRows] = await connection.query(
-                `SELECT o.*, u.name as customer_name FROM orders o WHERE o.id = ? AND o.mitra_id = ?`,
+                `SELECT o.* FROM orders o WHERE o.id = ? AND o.mitra_id = ?`,
                 [id, mitraId]
             );
+
+            console.log(`📊 Query result count: ${orderRows.length}`);
 
             if (orderRows.length === 0) {
                 await connection.rollback();
                 return res.status(404).json({
                     success: false,
-                    message: 'Order tidak ditemukan'
+                    message: 'Order tidak ditemukan atau bukan milik mitra ini'
                 });
             }
 
             const order = orderRows[0];
+            console.log(`✅ Order found: ID=${order.id}, status=${order.status}`);
 
+            // 🔥 Validasi status: hanya 'pending' yang bisa lanjut ke 'otw'
             if (order.status !== 'pending') {
                 await connection.rollback();
                 return res.status(400).json({
@@ -1234,34 +1248,52 @@ const OrderController = {
                 });
             }
 
+            // 🔥 Update status ke 'otw'
             await connection.query(
                 'UPDATE orders SET status = ? WHERE id = ?',
                 ['otw', id]
             );
 
             await connection.commit();
+            console.log(`✅ Order ${id} status updated from ${order.status} to 'otw'`);
 
-            // Kirim notifikasi ke customer
+            // Kirim notifikasi ke customer (opsional)
             try {
-                await notificationService.sendOrderOtwNotificationToCustomer(
-                    order.customer_id,
-                    id,
-                    order.order_code
+                // Ambil data customer untuk notifikasi
+                const [customerRows] = await connection.query(
+                    'SELECT name, phone FROM users WHERE id = ?',
+                    [order.customer_id]
                 );
+
+                if (customerRows.length > 0 && notificationService) {
+                    await notificationService.sendOrderOtwNotificationToCustomer(
+                        order.customer_id,
+                        id,
+                        order.order_code,
+                        customerRows[0].name
+                    );
+                    console.log(`✅ Notification sent to customer`);
+                }
             } catch (err) {
                 console.error('Error sending notification:', err.message);
             }
 
             return res.json({
                 success: true,
-                message: 'Status diperbarui: Dalam Perjalanan',
-                data: { order_id: parseInt(id), status: 'otw' }
+                message: 'Status diperbarui: Dalam Perjalanan 🚗',
+                data: {
+                    order_id: parseInt(id),
+                    status: 'otw'
+                }
             });
 
         } catch (error) {
             if (connection) await connection.rollback();
             console.error('Error in otwOrder:', error);
-            return res.status(500).json({ success: false, message: error.message });
+            return res.status(500).json({
+                success: false,
+                message: error.message
+            });
         } finally {
             if (connection) connection.release();
         }
@@ -1356,6 +1388,7 @@ const OrderController = {
     },
 
     // 3. MITRA START ORDER - 🔥 DIPERBAIKI
+    // 3. MITRA START ORDER - DIPERBAIKI
     startOrder: async (req, res) => {
         let connection;
         const { id } = req.params;
@@ -1363,17 +1396,21 @@ const OrderController = {
 
         console.log(`\n========== [START ORDER] ==========`);
         console.log(`📝 Request params.id: ${id}`);
-        console.log(`👤 Mitra ID from token: ${mitraId}`);
+        console.log(`👤 Mitra ID: ${mitraId}`);
+
+        if (!mitraId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized: Mitra ID tidak ditemukan'
+            });
+        }
 
         try {
             connection = await db.getConnection();
             await connection.beginTransaction();
 
             const [orderRows] = await connection.query(
-                `SELECT o.*, u.name as customer_name 
-             FROM orders o
-             LEFT JOIN users u ON o.customer_id = u.id
-             WHERE o.id = ? AND o.mitra_id = ?`,
+                `SELECT o.* FROM orders o WHERE o.id = ? AND o.mitra_id = ?`,
                 [id, mitraId]
             );
 
@@ -1386,18 +1423,17 @@ const OrderController = {
             }
 
             const order = orderRows[0];
-            console.log(`✅ Order found: ID=${order.id}, Code=${order.order_code}, Status=${order.status}`);
+            console.log(`✅ Order found: ID=${order.id}, status=${order.status}`);
 
-            // 🔥 PERBAIKAN: Cek status 'pending' (bukan 'accepted')
-            if (order.status !== 'pending') {
+            // 🔥 PERBAIKAN: Cek status 'otw' (bukan 'accepted')
+            if (order.status !== 'otw') {
                 await connection.rollback();
                 return res.status(400).json({
                     success: false,
-                    message: `Pesanan dengan status ${order.status} tidak dapat dimulai`
+                    message: `Pesanan dengan status ${order.status} tidak dapat dimulai. Status harus 'otw' terlebih dahulu.`
                 });
             }
 
-            // 🔥 Update ke 'ongoing'
             await connection.query(
                 'UPDATE orders SET status = ? WHERE id = ?',
                 ['ongoing', id]
@@ -1406,19 +1442,9 @@ const OrderController = {
             await connection.commit();
             console.log(`✅ Order ${id} started, status now 'ongoing'`);
 
-            try {
-                await notificationService.sendOrderProcessingNotificationToCustomer(
-                    order.customer_id,
-                    id,
-                    order.order_code
-                );
-            } catch (err) {
-                console.error('Error sending notification:', err.message);
-            }
-
             return res.json({
                 success: true,
-                message: 'Pekerjaan dimulai',
+                message: 'Pekerjaan dimulai! 💪',
                 data: {
                     order_id: parseInt(id),
                     status: 'ongoing'
@@ -1436,7 +1462,6 @@ const OrderController = {
             if (connection) connection.release();
         }
     },
-
     // 4. MITRA COMPLETE ORDER - 🔥 DIPERBAIKI
     completeOrder: async (req, res) => {
         let connection;
