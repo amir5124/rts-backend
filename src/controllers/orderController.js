@@ -1092,6 +1092,9 @@ const OrderController = {
     // 11. MITRA ACCEPT ORDER
     // ========== ENDPOINT UNTUK MITRA (ORDER MANAGEMENT) ==========
 
+    // 11. MITRA ACCEPT ORDER
+    // ========== ENDPOINT UNTUK MITRA (ORDER MANAGEMENT) ==========
+
     // 1. MITRA ACCEPT ORDER
     acceptOrder: async (req, res) => {
         let connection;
@@ -1101,14 +1104,10 @@ const OrderController = {
         console.log(`\n========== [ACCEPT ORDER] ==========`);
         console.log(`📝 Request params.id: ${id}`);
         console.log(`👤 Mitra ID from token: ${mitraId}`);
-        console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
 
         try {
             connection = await db.getConnection();
             await connection.beginTransaction();
-
-            // 🔥 Cek order dengan logging detail
-            console.log(`🔍 Querying order ID ${id} for mitra ${mitraId}...`);
 
             const [orderRows] = await connection.query(
                 `SELECT o.*, u.name as customer_name, s.service_name 
@@ -1119,26 +1118,7 @@ const OrderController = {
                 [id, mitraId]
             );
 
-            console.log(`📊 Query result count: ${orderRows.length}`);
-
             if (orderRows.length === 0) {
-                // Debug: Cek apakah order ada tapi mitra_id berbeda
-                const [checkOrder] = await connection.query(
-                    `SELECT id, mitra_id, status, order_code FROM orders WHERE id = ?`,
-                    [id]
-                );
-
-                if (checkOrder.length > 0) {
-                    console.log(`⚠️ Order found but mitra_id mismatch!`);
-                    console.log(`   - Order ID: ${checkOrder[0].id}`);
-                    console.log(`   - Order mitra_id: ${checkOrder[0].mitra_id}`);
-                    console.log(`   - Your mitra_id: ${mitraId}`);
-                    console.log(`   - Order status: ${checkOrder[0].status}`);
-                    console.log(`   - Order code: ${checkOrder[0].order_code}`);
-                } else {
-                    console.log(`❌ Order ID ${id} not found in database`);
-                }
-
                 await connection.rollback();
                 return res.status(404).json({
                     success: false,
@@ -1147,19 +1127,11 @@ const OrderController = {
             }
 
             const order = orderRows[0];
-            console.log(`✅ Order found:`);
-            console.log(`   - Order ID: ${order.id}`);
-            console.log(`   - Order Code: ${order.order_code}`);
-            console.log(`   - Current Status: ${order.status}`);
-            console.log(`   - Customer: ${order.customer_name}`);
-            console.log(`   - Service: ${order.service_name}`);
 
-            // Validasi status
+            // 🔥 Status yang bisa diaccept: 'paid' atau 'pending_payment'
             const allowedStatuses = ['paid', 'pending_payment'];
-            console.log(`🔍 Checking status: ${order.status} in allowed: ${allowedStatuses.includes(order.status)}`);
 
             if (!allowedStatuses.includes(order.status)) {
-                console.log(`❌ Invalid status: ${order.status}. Expected: paid or pending_payment`);
                 await connection.rollback();
                 return res.status(400).json({
                     success: false,
@@ -1167,46 +1139,37 @@ const OrderController = {
                 });
             }
 
-            // Update status order
-            console.log(`🔄 Updating order status from ${order.status} to 'accepted'...`);
+            // 🔥 Ubah status ke 'pending' (bukan 'accepted')
             await connection.query(
                 'UPDATE orders SET status = ?, confirmed_at_mitra = NOW() WHERE id = ?',
-                ['accepted', id]
+                ['pending', id]
             );
 
             await connection.commit();
-            console.log(`✅ Order ${id} status updated to 'accepted'`);
 
-            // Kirim notifikasi ke customer (jangan block jika gagal)
             try {
-                console.log(`📢 Sending notification to customer ${order.customer_id}...`);
                 await notificationService.sendOrderConfirmedNotificationToCustomer(
                     order.customer_id,
                     id,
                     order.order_code,
                     req.user?.name || 'Mitra'
                 );
-                console.log(`✅ Notification sent to customer`);
             } catch (err) {
-                console.error(`❌ Error sending notification:`, err.message);
+                console.error('Error sending notification:', err.message);
             }
-
-            console.log(`========== [ACCEPT ORDER] SUCCESS ==========\n`);
 
             return res.json({
                 success: true,
                 message: 'Pesanan berhasil diterima',
                 data: {
                     order_id: parseInt(id),
-                    status: 'accepted'
+                    status: 'pending'
                 }
             });
 
         } catch (error) {
             if (connection) await connection.rollback();
-            console.error(`❌ [ACCEPT ORDER] Error:`, error.message);
-            console.error(`Stack:`, error.stack);
-            console.log(`========== [ACCEPT ORDER] FAILED ==========\n`);
+            console.error('Error in acceptOrder:', error);
             return res.status(500).json({
                 success: false,
                 message: error.message
@@ -1227,13 +1190,10 @@ const OrderController = {
         console.log(`📝 Request params.id: ${id}`);
         console.log(`👤 Mitra ID from token: ${mitraId}`);
         console.log(`💬 Reject reason: ${reason || 'No reason provided'}`);
-        console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
 
         try {
             connection = await db.getConnection();
             await connection.beginTransaction();
-
-            console.log(`🔍 Querying order ID ${id} for mitra ${mitraId}...`);
 
             const [orderRows] = await connection.query(
                 `SELECT o.*, u.name as customer_name 
@@ -1243,20 +1203,7 @@ const OrderController = {
                 [id, mitraId]
             );
 
-            console.log(`📊 Query result count: ${orderRows.length}`);
-
             if (orderRows.length === 0) {
-                const [checkOrder] = await connection.query(
-                    `SELECT id, mitra_id, status FROM orders WHERE id = ?`,
-                    [id]
-                );
-
-                if (checkOrder.length > 0) {
-                    console.log(`⚠️ Order found but mitra_id mismatch! Order mitra_id=${checkOrder[0].mitra_id}, Your mitra_id=${mitraId}`);
-                } else {
-                    console.log(`❌ Order ID ${id} not found`);
-                }
-
                 await connection.rollback();
                 return res.status(404).json({
                     success: false,
@@ -1269,7 +1216,6 @@ const OrderController = {
 
             const allowedStatuses = ['paid', 'pending_payment'];
             if (!allowedStatuses.includes(order.status)) {
-                console.log(`❌ Invalid status for reject: ${order.status}`);
                 await connection.rollback();
                 return res.status(400).json({
                     success: false,
@@ -1277,13 +1223,11 @@ const OrderController = {
                 });
             }
 
-            console.log(`🔄 Updating order status to 'cancelled'...`);
             await connection.query(
                 'UPDATE orders SET status = ? WHERE id = ?',
                 ['cancelled', id]
             );
 
-            console.log(`🔄 Updating payment status to 'REFUNDED'...`);
             await connection.query(
                 'UPDATE payments SET status = ? WHERE order_id = ?',
                 ['REFUNDED', id]
@@ -1292,21 +1236,16 @@ const OrderController = {
             await connection.commit();
             console.log(`✅ Order ${id} rejected and marked as cancelled`);
 
-            // Kirim notifikasi ke customer
             try {
-                console.log(`📢 Sending cancellation notification to customer ${order.customer_id}...`);
                 await notificationService.sendOrderCancelledNotificationToCustomer(
                     order.customer_id,
                     id,
                     order.order_code,
                     reason || 'Ditolak oleh mitra'
                 );
-                console.log(`✅ Notification sent to customer`);
             } catch (err) {
-                console.error(`❌ Error sending notification:`, err.message);
+                console.error('Error sending notification:', err.message);
             }
-
-            console.log(`========== [REJECT ORDER] SUCCESS ==========\n`);
 
             return res.json({
                 success: true,
@@ -1319,8 +1258,7 @@ const OrderController = {
 
         } catch (error) {
             if (connection) await connection.rollback();
-            console.error(`❌ [REJECT ORDER] Error:`, error.message);
-            console.log(`========== [REJECT ORDER] FAILED ==========\n`);
+            console.error('Error in rejectOrder:', error);
             return res.status(500).json({
                 success: false,
                 message: error.message
@@ -1330,7 +1268,7 @@ const OrderController = {
         }
     },
 
-    // 3. MITRA START ORDER
+    // 3. MITRA START ORDER - 🔥 DIPERBAIKI
     startOrder: async (req, res) => {
         let connection;
         const { id } = req.params;
@@ -1339,13 +1277,10 @@ const OrderController = {
         console.log(`\n========== [START ORDER] ==========`);
         console.log(`📝 Request params.id: ${id}`);
         console.log(`👤 Mitra ID from token: ${mitraId}`);
-        console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
 
         try {
             connection = await db.getConnection();
             await connection.beginTransaction();
-
-            console.log(`🔍 Querying order ID ${id} for mitra ${mitraId}...`);
 
             const [orderRows] = await connection.query(
                 `SELECT o.*, u.name as customer_name 
@@ -1355,20 +1290,7 @@ const OrderController = {
                 [id, mitraId]
             );
 
-            console.log(`📊 Query result count: ${orderRows.length}`);
-
             if (orderRows.length === 0) {
-                const [checkOrder] = await connection.query(
-                    `SELECT id, mitra_id, status FROM orders WHERE id = ?`,
-                    [id]
-                );
-
-                if (checkOrder.length > 0) {
-                    console.log(`⚠️ Order found but mitra_id mismatch! Order mitra_id=${checkOrder[0].mitra_id}, Your mitra_id=${mitraId}`);
-                } else {
-                    console.log(`❌ Order ID ${id} not found`);
-                }
-
                 await connection.rollback();
                 return res.status(404).json({
                     success: false,
@@ -1379,8 +1301,8 @@ const OrderController = {
             const order = orderRows[0];
             console.log(`✅ Order found: ID=${order.id}, Code=${order.order_code}, Status=${order.status}`);
 
-            if (order.status !== 'accepted') {
-                console.log(`❌ Invalid status for start: ${order.status}. Expected: 'accepted'`);
+            // 🔥 PERBAIKAN: Cek status 'pending' (bukan 'accepted')
+            if (order.status !== 'pending') {
                 await connection.rollback();
                 return res.status(400).json({
                     success: false,
@@ -1388,7 +1310,7 @@ const OrderController = {
                 });
             }
 
-            console.log(`🔄 Updating order status from 'accepted' to 'ongoing'...`);
+            // 🔥 Update ke 'ongoing'
             await connection.query(
                 'UPDATE orders SET status = ? WHERE id = ?',
                 ['ongoing', id]
@@ -1397,20 +1319,15 @@ const OrderController = {
             await connection.commit();
             console.log(`✅ Order ${id} started, status now 'ongoing'`);
 
-            // Kirim notifikasi ke customer
             try {
-                console.log(`📢 Sending processing notification to customer ${order.customer_id}...`);
                 await notificationService.sendOrderProcessingNotificationToCustomer(
                     order.customer_id,
                     id,
                     order.order_code
                 );
-                console.log(`✅ Notification sent to customer`);
             } catch (err) {
-                console.error(`❌ Error sending notification:`, err.message);
+                console.error('Error sending notification:', err.message);
             }
-
-            console.log(`========== [START ORDER] SUCCESS ==========\n`);
 
             return res.json({
                 success: true,
@@ -1423,8 +1340,7 @@ const OrderController = {
 
         } catch (error) {
             if (connection) await connection.rollback();
-            console.error(`❌ [START ORDER] Error:`, error.message);
-            console.log(`========== [START ORDER] FAILED ==========\n`);
+            console.error('Error in startOrder:', error);
             return res.status(500).json({
                 success: false,
                 message: error.message
@@ -1434,7 +1350,7 @@ const OrderController = {
         }
     },
 
-    // 4. MITRA COMPLETE ORDER
+    // 4. MITRA COMPLETE ORDER - 🔥 DIPERBAIKI
     completeOrder: async (req, res) => {
         let connection;
         const { id } = req.params;
@@ -1443,13 +1359,10 @@ const OrderController = {
         console.log(`\n========== [COMPLETE ORDER] ==========`);
         console.log(`📝 Request params.id: ${id}`);
         console.log(`👤 Mitra ID from token: ${mitraId}`);
-        console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
 
         try {
             connection = await db.getConnection();
             await connection.beginTransaction();
-
-            console.log(`🔍 Querying order ID ${id} for mitra ${mitraId}...`);
 
             const [orderRows] = await connection.query(
                 `SELECT o.*, u.name as customer_name, s.service_name 
@@ -1460,20 +1373,7 @@ const OrderController = {
                 [id, mitraId]
             );
 
-            console.log(`📊 Query result count: ${orderRows.length}`);
-
             if (orderRows.length === 0) {
-                const [checkOrder] = await connection.query(
-                    `SELECT id, mitra_id, status FROM orders WHERE id = ?`,
-                    [id]
-                );
-
-                if (checkOrder.length > 0) {
-                    console.log(`⚠️ Order found but mitra_id mismatch! Order mitra_id=${checkOrder[0].mitra_id}, Your mitra_id=${mitraId}`);
-                } else {
-                    console.log(`❌ Order ID ${id} not found`);
-                }
-
                 await connection.rollback();
                 return res.status(404).json({
                     success: false,
@@ -1483,11 +1383,9 @@ const OrderController = {
 
             const order = orderRows[0];
             console.log(`✅ Order found: ID=${order.id}, Code=${order.order_code}, Status=${order.status}`);
-            console.log(`   - Customer: ${order.customer_name}`);
-            console.log(`   - Service: ${order.service_name}`);
 
-            if (order.status !== 'ongoing' && order.status !== 'accepted') {
-                console.log(`❌ Invalid status for complete: ${order.status}. Expected: 'ongoing' or 'accepted'`);
+            // 🔥 PERBAIKAN: Cek status 'ongoing' (bukan 'accepted')
+            if (order.status !== 'ongoing') {
                 await connection.rollback();
                 return res.status(400).json({
                     success: false,
@@ -1495,13 +1393,11 @@ const OrderController = {
                 });
             }
 
-            console.log(`🔄 Updating order status from ${order.status} to 'completed'...`);
             await connection.query(
                 'UPDATE orders SET status = ?, completed_at = NOW() WHERE id = ?',
                 ['completed', id]
             );
 
-            console.log(`🔄 Updating payment status to 'SUCCESS'...`);
             await connection.query(
                 'UPDATE payments SET status = ? WHERE order_id = ?',
                 ['SUCCESS', id]
@@ -1510,21 +1406,16 @@ const OrderController = {
             await connection.commit();
             console.log(`✅ Order ${id} completed!`);
 
-            // Kirim notifikasi ke customer
             try {
-                console.log(`📢 Sending completion notification to customer ${order.customer_id}...`);
                 await notificationService.sendOrderCompletedNotificationToCustomer(
                     order.customer_id,
                     id,
                     order.order_code,
                     order.service_name
                 );
-                console.log(`✅ Notification sent to customer`);
             } catch (err) {
-                console.error(`❌ Error sending notification:`, err.message);
+                console.error('Error sending notification:', err.message);
             }
-
-            console.log(`========== [COMPLETE ORDER] SUCCESS ==========\n`);
 
             return res.json({
                 success: true,
@@ -1537,8 +1428,7 @@ const OrderController = {
 
         } catch (error) {
             if (connection) await connection.rollback();
-            console.error(`❌ [COMPLETE ORDER] Error:`, error.message);
-            console.log(`========== [COMPLETE ORDER] FAILED ==========\n`);
+            console.error('Error in completeOrder:', error);
             return res.status(500).json({
                 success: false,
                 message: error.message
