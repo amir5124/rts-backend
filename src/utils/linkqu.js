@@ -128,7 +128,7 @@ const LinkQuUtility = {
             ...signatureData,
             customer_phone,
             remark: 'Payment ' + partner_reff,
-            url_callback: d.url_callback || 'https://api.siappgo.id/api/payments/callback',
+            url_callback: d.url_callback || 'https://api.siappgo.id/api/v1/payments/callback',
             username: config.username,
             pin: config.pin,
             signature
@@ -173,7 +173,7 @@ const LinkQuUtility = {
         const finalBody = {
             ...signatureData,
             customer_phone,
-            url_callback: d.url_callback || 'https://api.siappgo.id/api/payments/callback',
+            url_callback: d.url_callback || 'https://api.siappgo.id/api/v1/payments/callback',
             username: config.username,
             pin: config.pin,
             signature

@@ -40,7 +40,7 @@ const PaymentController = {
                 customer_name: (customer.name || 'Customer').substring(0, 30),
                 customer_email: customer.email || 'guest@mail.com',
                 customer_phone: phone,
-                url_callback: "https://api.siappgo.id/api/payments/callback"
+                url_callback: "https://api.siappgo.id/api/v1/payments/callback"
             };
 
             let result;
