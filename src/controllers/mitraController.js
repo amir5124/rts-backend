@@ -4,6 +4,17 @@ const notificationService = require('../services/notificationService');
 const fs = require('fs');
 const path = require('path');
 
+const UPLOAD_BASE_PATH = process.env.UPLOAD_PATH || '/app/uploads';
+const CERTIFICATES_PATH = path.join(UPLOAD_BASE_PATH, 'certificates');
+
+// Pastikan folder certificates ada
+if (!fs.existsSync(CERTIFICATES_PATH)) {
+    fs.mkdirSync(CERTIFICATES_PATH, { recursive: true });
+    console.log(`📁 [MITRA] Created certificates directory: ${CERTIFICATES_PATH}`);
+}
+
+console.log(`📁 [MITRA] CERTIFICATES_PATH: ${CERTIFICATES_PATH}`);
+
 const mitraController = {
 
     // Registrasi Mitra Baru
@@ -14,7 +25,7 @@ const mitraController = {
             const {
                 user_id,
                 specialization,
-                certificate_url, // ini bisa berupa base64 string atau URL
+                certificate_url,
                 address,
                 address_latitude,
                 address_longitude,
@@ -63,29 +74,25 @@ const mitraController = {
                 });
             }
 
-            // Proses certificate_url jika berupa base64
+            // 🔥 PERBAIKAN: Proses certificate_url dengan path yang benar
             let finalCertificateUrl = null;
 
             if (certificate_url) {
-                // Cek apakah certificate_url adalah base64 string
                 const isBase64 = certificate_url.startsWith('data:image') ||
                     certificate_url.startsWith('data:application/pdf') ||
                     /^[A-Za-z0-9+/=]+$/.test(certificate_url.substring(0, 100));
 
                 if (isBase64 && (certificate_url.includes('base64') || certificate_url.length > 500)) {
                     try {
-                        // Buat folder certificates jika belum ada
-                        const uploadDir = path.join(__dirname, '../../uploads/certificates');
-                        if (!fs.existsSync(uploadDir)) {
-                            fs.mkdirSync(uploadDir, { recursive: true });
+                        // 🔥 Gunakan CERTIFICATES_PATH dari environment
+                        if (!fs.existsSync(CERTIFICATES_PATH)) {
+                            fs.mkdirSync(CERTIFICATES_PATH, { recursive: true });
                         }
 
-                        // Extract base64 data
                         let base64Data = certificate_url;
                         let fileExtension = 'jpg';
 
                         if (certificate_url.startsWith('data:image')) {
-                            // Format: data:image/jpeg;base64,xxxxx
                             const matches = certificate_url.match(/^data:image\/(\w+);base64,/);
                             if (matches && matches[1]) {
                                 fileExtension = matches[1] === 'jpeg' ? 'jpg' : matches[1];
@@ -98,24 +105,18 @@ const mitraController = {
                             base64Data = certificate_url.split('base64,')[1];
                         }
 
-                        // Generate filename
                         const filename = `cert_${user_id}_${Date.now()}.${fileExtension}`;
-                        const filepath = path.join(uploadDir, filename);
+                        const filepath = path.join(CERTIFICATES_PATH, filename);
 
-                        // Save file
                         fs.writeFileSync(filepath, base64Data, 'base64');
-
-                        // Set URL untuk disimpan di database (relative path)
                         finalCertificateUrl = `/uploads/certificates/${filename}`;
 
-                        console.log(`✅ Certificate saved: ${finalCertificateUrl}`);
+                        console.log(`✅ Certificate saved: ${finalCertificateUrl} at ${filepath}`);
                     } catch (fileError) {
                         console.error('❌ Error saving certificate file:', fileError);
-                        // Jika gagal menyimpan file, simpan URL asli saja
                         finalCertificateUrl = certificate_url;
                     }
                 } else {
-                    // Jika bukan base64, langsung gunakan sebagai URL
                     finalCertificateUrl = certificate_url;
                 }
             }
@@ -143,7 +144,7 @@ const mitraController = {
             await connection.query(mitraQuery, [
                 user_id,
                 specializationValue,
-                finalCertificateUrl, // Gunakan URL file yang sudah disimpan
+                finalCertificateUrl,
                 address,
                 address_latitude || null,
                 address_longitude || null,
@@ -190,6 +191,7 @@ const mitraController = {
             if (connection) connection.release();
         }
     },
+
     // Check status registrasi mitra
     checkMitraStatus: async (req, res) => {
         let connection;
