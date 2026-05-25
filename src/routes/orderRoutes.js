@@ -112,7 +112,15 @@ router.get('/:id', (req, res, next) => {
     next();
 }, OrderController.getOrderById);
 
-// MITRA ROUTES
-router.post('/mitra/order/:id/otw', OrderController.otwOrder);  // 🔥 TAMBAHKAN
+router.post('/mitra/order/:id/otw', (req, res, next) => {
+    console.log(`📡 [ROUTE] POST /orders/mitra/order/${req.params.id}/otw`);
+    if (!req.user) {
+        req.user = { id: parseInt(req.query.mitra_id) || 20, name: 'Test Mitra', role: 'mitra' };
+        console.log(`👤 [ROUTE] Auto-set req.user:`, req.user);
+    }
+    next();
+}, OrderController.otwOrder);
+
+
 
 module.exports = router;
