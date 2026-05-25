@@ -94,25 +94,12 @@ const PaymentController = {
             connection = await db.getConnection();
             await connection.beginTransaction();
 
-            const { partner_reff, status, transaction_status, response_code } = req.body;
-            const statusUpper = (status || transaction_status || "").toUpperCase();
-            const isSuccess = statusUpper === "SUCCESS" ||
-                statusUpper === "SETTLED" ||
-                response_code === "00" ||
-                response_code === "200";
+            const { partner_reff, status, response_code, transaction_time } = req.body;
+            const isSuccess = status === "SUCCESS" || status === "SETTLED" || response_code === "00";
 
-            // Cari data lengkap order
             const [payments] = await connection.query(
-                `SELECT 
-                    p.order_id, 
-                    o.mitra_id, 
-                    o.customer_id, 
-                    o.order_code, 
-                    o.service_id,
-                    o.total_amount,
-                    s.service_name, 
-                    c.name as customer_name,
-                    m.name as mitra_name
+                `SELECT p.order_id, o.mitra_id, o.customer_id, o.order_code, o.total_amount,
+                        s.service_name, c.name as customer_name, m.name as mitra_name
                  FROM payments p
                  LEFT JOIN orders o ON p.order_id = o.id
                  LEFT JOIN services s ON o.service_id = s.id
@@ -124,7 +111,6 @@ const PaymentController = {
 
             if (payments.length === 0) {
                 await connection.rollback();
-                console.warn(`⚠️ [CALLBACK] Reff ${partner_reff} not found.`);
                 return res.status(200).json({ status: "SUCCESS" });
             }
 
@@ -136,78 +122,38 @@ const PaymentController = {
             const customerName = payments[0].customer_name;
             const totalAmount = payments[0].total_amount;
 
-            // Update payload_callback dan payload_response
+            // 🔥 UPDATE TANPA updated_at
             await connection.query(
-                `UPDATE payments SET 
-                    payload_callback = ?,
-                    payload_response = ?,
-                    updated_at = NOW()
-                 WHERE partner_reff = ?`,
+                `UPDATE payments SET payload_callback = ?, payload_response = ? WHERE partner_reff = ?`,
                 [JSON.stringify(req.body), JSON.stringify(req.body), partner_reff]
             );
 
             if (isSuccess) {
-                // Update status payment
                 await connection.query(
-                    `UPDATE payments SET 
-                        status = 'SUCCESS', 
-                        paid_at = NOW(),
-                        updated_at = NOW()
-                     WHERE partner_reff = ?`,
-                    [partner_reff]
+                    `UPDATE payments SET status = 'SUCCESS', paid_at = ? WHERE partner_reff = ?`,
+                    [transaction_time || new Date(), partner_reff]
                 );
 
-                // Update status order
                 await connection.query(
-                    `UPDATE orders SET 
-                        status = 'paid',
-                        updated_at = NOW()
-                     WHERE id = ?`,
+                    `UPDATE orders SET status = 'paid' WHERE id = ?`,
                     [orderId]
                 );
 
                 await connection.commit();
-                console.log(`✅ [CALLBACK] Reff ${partner_reff} Success. Order ${orderId} UPDATED.`);
+                console.log(`✅ [CALLBACK] Success. Order ${orderId} UPDATED.`);
 
-                // Kirim notifikasi (di luar transaction - jangan block callback)
-                // Notifikasi ke mitra
                 if (mitraId) {
                     notificationService.sendNewOrderNotificationToMitra(
                         mitraId, orderId, customerName, serviceName, orderCode
-                    ).catch(err => console.error('❌ Notif mitra error:', err.message));
+                    ).catch(err => console.error('Notif error:', err.message));
                 }
 
-                // Notifikasi ke customer
                 if (customerId) {
                     notificationService.sendPaymentSuccessNotificationToCustomer(
                         customerId, orderId, orderCode, totalAmount
-                    ).catch(err => console.error('❌ Notif customer error:', err.message));
+                    ).catch(err => console.error('Notif error:', err.message));
                 }
-
             } else {
-                // Jika status EXPIRED
-                if (statusUpper === "EXPIRED") {
-                    await connection.query(
-                        `UPDATE payments SET 
-                            status = 'EXPIRED',
-                            updated_at = NOW()
-                         WHERE partner_reff = ?`,
-                        [partner_reff]
-                    );
-
-                    await connection.query(
-                        `UPDATE orders SET 
-                            status = 'cancelled',
-                            updated_at = NOW()
-                         WHERE id = ?`,
-                        [orderId]
-                    );
-
-                    console.log(`⚠️ [CALLBACK] Reff ${partner_reff} EXPIRED. Order ${orderId} CANCELLED.`);
-                } else {
-                    console.log(`📝 [CALLBACK] Reff ${partner_reff} status: ${statusUpper} - Callback saved for debugging`);
-                }
-
                 await connection.commit();
             }
 
@@ -216,7 +162,6 @@ const PaymentController = {
         } catch (err) {
             if (connection) await connection.rollback();
             console.error("❌ [CALLBACK ERROR]:", err.message);
-            console.error("🔥 Error Stack:", err.stack);
             return res.status(500).json({ status: "ERROR", message: err.message });
         } finally {
             if (connection) connection.release();
