@@ -136,7 +136,7 @@ const PaymentController = {
             const customerName = payments[0].customer_name;
             const totalAmount = payments[0].total_amount;
 
-            // 🔥 Update payload_callback dan payload_response (keduanya disimpan)
+            // Update payload_callback dan payload_response
             await connection.query(
                 `UPDATE payments SET 
                     payload_callback = ?,
@@ -147,12 +147,12 @@ const PaymentController = {
             );
 
             if (isSuccess) {
-                // 🔥 Update status payment dengan semua kolom yang tersedia
+                // Update status payment
                 await connection.query(
                     `UPDATE payments SET 
                         status = 'SUCCESS', 
-                        paid_at = NOW(), 
-                        updated_at = NOW() 
+                        paid_at = NOW(),
+                        updated_at = NOW()
                      WHERE partner_reff = ?`,
                     [partner_reff]
                 );
@@ -160,8 +160,8 @@ const PaymentController = {
                 // Update status order
                 await connection.query(
                     `UPDATE orders SET 
-                        status = 'PAID', 
-                        updated_at = NOW() 
+                        status = 'paid',
+                        updated_at = NOW()
                      WHERE id = ?`,
                     [orderId]
                 );
@@ -169,43 +169,36 @@ const PaymentController = {
                 await connection.commit();
                 console.log(`✅ [CALLBACK] Reff ${partner_reff} Success. Order ${orderId} UPDATED.`);
 
-                // 🔥 Kirim notifikasi (di luar transaction - jangan block callback)
+                // Kirim notifikasi (di luar transaction - jangan block callback)
                 // Notifikasi ke mitra
                 if (mitraId) {
                     notificationService.sendNewOrderNotificationToMitra(
-                        mitraId,
-                        orderId,
-                        customerName,
-                        serviceName,
-                        orderCode
+                        mitraId, orderId, customerName, serviceName, orderCode
                     ).catch(err => console.error('❌ Notif mitra error:', err.message));
                 }
 
                 // Notifikasi ke customer
                 if (customerId) {
                     notificationService.sendPaymentSuccessNotificationToCustomer(
-                        customerId,
-                        orderId,
-                        orderCode,
-                        totalAmount
+                        customerId, orderId, orderCode, totalAmount
                     ).catch(err => console.error('❌ Notif customer error:', err.message));
                 }
 
             } else {
-                // 🔥 Jika status tidak success, tetap update status jika perlu
+                // Jika status EXPIRED
                 if (statusUpper === "EXPIRED") {
                     await connection.query(
                         `UPDATE payments SET 
-                            status = 'EXPIRED', 
-                            updated_at = NOW() 
+                            status = 'EXPIRED',
+                            updated_at = NOW()
                          WHERE partner_reff = ?`,
                         [partner_reff]
                     );
 
                     await connection.query(
                         `UPDATE orders SET 
-                            status = 'CANCELLED', 
-                            updated_at = NOW() 
+                            status = 'cancelled',
+                            updated_at = NOW()
                          WHERE id = ?`,
                         [orderId]
                     );
