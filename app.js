@@ -11,21 +11,21 @@ dotenv.config();
 
 const app = express();
 
-// 🔥 Tentukan base path untuk uploads (bisa dari env atau default)
-// Untuk Coolify, gunakan /app/uploads (sesuai destination path di volume mount)
-const UPLOAD_BASE_PATH = process.env.UPLOAD_PATH || path.join(__dirname, 'uploads');
+const UPLOAD_BASE_PATH = process.env.UPLOAD_PATH ||
+    (process.env.NODE_ENV === 'production' ? '/app/uploads' : path.join(__dirname, 'uploads'));
+
 const PROFILES_PATH = path.join(UPLOAD_BASE_PATH, 'profiles');
 const CERTIFICATES_PATH = path.join(UPLOAD_BASE_PATH, 'certificates');
 
 console.log(`\n📁 ========== UPLOAD CONFIGURATION ==========`);
+console.log(`📁 NODE_ENV: ${process.env.NODE_ENV}`);
+console.log(`📁 UPLOAD_PATH env: ${process.env.UPLOAD_PATH || 'NOT SET'}`);
 console.log(`📁 UPLOAD_BASE_PATH: ${UPLOAD_BASE_PATH}`);
 console.log(`📁 PROFILES_PATH: ${PROFILES_PATH}`);
-console.log(`📁 CERTIFICATES_PATH: ${CERTIFICATES_PATH}`);
 console.log(`============================================\n`);
 
-// --- Auto-create folders untuk uploads ---
-const uploadDirs = [UPLOAD_BASE_PATH, PROFILES_PATH, CERTIFICATES_PATH];
-uploadDirs.forEach(dir => {
+// Buat folder jika belum ada
+[UPLOAD_BASE_PATH, PROFILES_PATH, CERTIFICATES_PATH].forEach(dir => {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
         console.log(`📁 Created directory: ${dir}`);
