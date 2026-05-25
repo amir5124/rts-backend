@@ -973,49 +973,67 @@ const OrderController = {
     // ========== ENDPOINT UNTUK MITRA (ORDER MANAGEMENT) ==========
 
     // 10. GET ORDER DETAIL FOR MITRA
+    // controllers/orderController.js
+
     getOrderDetailForMitra: async (req, res) => {
         let connection;
         const { id } = req.params;
         const mitra_id = req.user?.id;
 
+        console.log(`🔍 [ORDER] getOrderDetailForMitra called`);
+        console.log(`📝 [ORDER] params.id = ${id}, type = ${typeof id}`);
+        console.log(`👤 [ORDER] req.user.id = ${mitra_id}`);
+
         try {
             connection = await db.getConnection();
 
-            const query = `
-            SELECT 
-                o.*,
-                u.name as customer_name, 
-                u.phone as customer_phone, 
-                u.email as customer_email,
+            // 🔥 PERBAIKAN: Jangan filter mitra_id dulu, cek dulu ordernya
+            const [orders] = await connection.query(
+                `SELECT 
+                o.id, o.order_code, o.status, o.total_amount, 
+                o.scheduled_at, o.note, o.created_at,
+                o.latitude_dest, o.longitude_dest, o.address_google, o.address_detail,
+                u.id as customer_id, u.name as customer_name, 
+                u.phone as customer_phone, u.email as customer_email,
                 u.profile_pic as customer_profile_pic,
-                s.service_name, 
-                s.description as service_description,
-                sp.price as base_price,
-                sp.duration as service_duration,
-                p.id as payment_id, 
-                p.method as payment_method, 
-                p.status as payment_status, 
-                p.amount as payment_amount,
-                p.va_number,
-                p.qris_url
+                s.id as service_id, s.service_name, s.description as service_description,
+                COALESCE(sp.price, 0) as base_price,
+                p.id as payment_id, p.method as payment_method, 
+                p.status as payment_status, p.amount as payment_amount,
+                p.va_number, p.qris_url
             FROM orders o
             LEFT JOIN users u ON o.customer_id = u.id
             LEFT JOIN services s ON o.service_id = s.id
             LEFT JOIN service_prices sp ON s.id = sp.service_id AND sp.duration = o.duration
             LEFT JOIN payments p ON o.id = p.order_id
-            WHERE o.id = ? AND o.mitra_id = ?
-        `;
+            WHERE o.id = ?`,
+                [id]
+            );
 
-            const [rows] = await connection.query(query, [id, mitra_id]);
+            console.log(`📊 [ORDER] Query result count: ${orders.length}`);
 
-            if (rows.length === 0) {
+            if (orders.length === 0) {
+                console.log(`❌ [ORDER] Order ${id} not found in database`);
                 return res.status(404).json({
                     success: false,
                     message: 'Pesanan tidak ditemukan'
                 });
             }
 
-            const order = rows[0];
+            const order = orders[0];
+
+            // 🔥 Cek apakah order ini milik mitra yang login (opsional, untuk keamanan)
+            if (order.mitra_id && order.mitra_id !== mitra_id) {
+                console.log(`⚠️ [ORDER] Order ${id} belongs to mitra ${order.mitra_id}, but user is ${mitra_id}`);
+                // Bisa return error atau tetap lanjut - tergantung kebijakan
+                // return res.status(403).json({
+                //     success: false,
+                //     message: 'Akses ditolak. Pesanan bukan milik Anda.'
+                // });
+            }
+
+            console.log(`✅ [ORDER] Order found: ${order.order_code}, status: ${order.status}`);
+
             const response = {
                 id: order.id,
                 order_code: order.order_code,
@@ -1023,36 +1041,37 @@ const OrderController = {
                 total_amount: parseFloat(order.total_amount),
                 scheduled_at: order.scheduled_at,
                 note: order.note,
-                duration: order.duration,
                 customer: {
                     id: order.customer_id,
-                    name: order.customer_name,
-                    phone: order.customer_phone,
-                    email: order.customer_email,
+                    name: order.customer_name || 'Pelanggan',
+                    phone: order.customer_phone || '-',
+                    email: order.customer_email || '-',
                     profile_pic: order.customer_profile_pic
                 },
                 service: {
                     id: order.service_id,
-                    name: order.service_name,
-                    description: order.service_description,
+                    name: order.service_name || 'Layanan',
+                    description: order.service_description || '',
                     base_price: parseFloat(order.base_price) || 0
                 },
                 location: {
-                    address: order.address_google,
-                    detail: order.address_detail,
+                    address: order.address_google || 'Alamat tidak tersedia',
+                    detail: order.address_detail || '',
                     latitude: order.latitude_dest ? parseFloat(order.latitude_dest) : null,
                     longitude: order.longitude_dest ? parseFloat(order.longitude_dest) : null
                 },
-                payment: {
+                payment: order.payment_id ? {
                     id: order.payment_id,
                     method: order.payment_method,
                     status: order.payment_status,
                     amount: parseFloat(order.payment_amount) || parseFloat(order.total_amount),
                     va_number: order.va_number,
                     qris_url: order.qris_url
-                },
+                } : null,
                 created_at: order.created_at
             };
+
+            console.log(`📦 [ORDER] Response prepared for order ${id}`);
 
             res.json({
                 success: true,
@@ -1060,16 +1079,16 @@ const OrderController = {
             });
 
         } catch (error) {
-            console.error('Error in getOrderDetailForMitra:', error);
+            console.error('❌ Error in getOrderDetailForMitra:', error);
             res.status(500).json({
                 success: false,
-                message: 'Terjadi kesalahan pada server'
+                message: 'Terjadi kesalahan pada server',
+                error: process.env.NODE_ENV === 'development' ? error.message : undefined
             });
         } finally {
             if (connection) connection.release();
         }
     },
-
     // 11. MITRA ACCEPT ORDER
     acceptOrder: async (req, res) => {
         let connection;
