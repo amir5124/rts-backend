@@ -11,12 +11,23 @@ dotenv.config();
 
 const app = express();
 
-// --- TAMBAHAN: Auto-create folders untuk uploads ---
-const uploadDirs = ['uploads', 'uploads/profiles', 'uploads/certificates'];
+// 🔥 Tentukan base path untuk uploads (bisa dari env atau default)
+// Untuk Coolify, gunakan /app/uploads (sesuai destination path di volume mount)
+const UPLOAD_BASE_PATH = process.env.UPLOAD_PATH || path.join(__dirname, 'uploads');
+const PROFILES_PATH = path.join(UPLOAD_BASE_PATH, 'profiles');
+const CERTIFICATES_PATH = path.join(UPLOAD_BASE_PATH, 'certificates');
+
+console.log(`\n📁 ========== UPLOAD CONFIGURATION ==========`);
+console.log(`📁 UPLOAD_BASE_PATH: ${UPLOAD_BASE_PATH}`);
+console.log(`📁 PROFILES_PATH: ${PROFILES_PATH}`);
+console.log(`📁 CERTIFICATES_PATH: ${CERTIFICATES_PATH}`);
+console.log(`============================================\n`);
+
+// --- Auto-create folders untuk uploads ---
+const uploadDirs = [UPLOAD_BASE_PATH, PROFILES_PATH, CERTIFICATES_PATH];
 uploadDirs.forEach(dir => {
-    const fullPath = path.join(__dirname, dir);
-    if (!fs.existsSync(fullPath)) {
-        fs.mkdirSync(fullPath, { recursive: true });
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
         console.log(`📁 Created directory: ${dir}`);
     }
 });
@@ -42,6 +53,7 @@ app.use(cors({
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
         if (allowedOrigins.indexOf(origin) === -1) {
+            console.warn(`⚠️ CORS blocked origin: ${origin}`);
             return callback(new Error('CORS policy violation'), false);
         }
         return callback(null, true);
@@ -60,16 +72,17 @@ if (process.env.NODE_ENV === 'development') {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 🔥 PERBAIKAN: Static Files dengan path yang benar
-// Pastikan folder uploads bisa diakses via /uploads
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-console.log(`📁 Static files served from: ${path.join(__dirname, 'uploads')}`);
+// 🔥 PERBAIKAN: Static Files dengan path yang benar menggunakan UPLOAD_BASE_PATH
+app.use('/uploads', express.static(UPLOAD_BASE_PATH));
+console.log(`📁 Static files served from: ${UPLOAD_BASE_PATH}`);
 console.log(`📁 Access via: /uploads/`);
 
-// 🔥 Tambahkan juga endpoint untuk cek file
+// 🔥 Endpoint untuk cek file (debugging)
 app.get('/uploads/check/:filename', (req, res) => {
     const filename = req.params.filename;
-    const filepath = path.join(__dirname, 'uploads/profiles', filename);
+    const filepath = path.join(PROFILES_PATH, filename);
+
+    console.log(`🔍 Checking file: ${filepath}`);
 
     if (fs.existsSync(filepath)) {
         res.json({
@@ -144,7 +157,8 @@ const server = app.listen(PORT, () => {
     🚀 Server berjalan di port: ${PORT}
     🛠️  Mode: ${process.env.NODE_ENV || 'development'}
     📅 Time: ${new Date().toLocaleString('id-ID')}
-    📁 Uploads directory: ${path.join(__dirname, 'uploads')}
+    📁 Uploads directory: ${UPLOAD_BASE_PATH}
+    📁 Profiles directory: ${PROFILES_PATH}
     =============================================
     `);
 });
