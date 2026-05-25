@@ -112,4 +112,7 @@ router.get('/:id', (req, res, next) => {
     next();
 }, OrderController.getOrderById);
 
+// MITRA ROUTES
+router.post('/mitra/order/:id/otw', OrderController.otwOrder);  // 🔥 TAMBAHKAN
+
 module.exports = router;

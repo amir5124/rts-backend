@@ -1197,6 +1197,75 @@ const OrderController = {
             if (connection) connection.release();
         }
     },
+
+    // 5. MITRA OTW (ON THE WAY) - TAMBAHKAN
+    otwOrder: async (req, res) => {
+        let connection;
+        const { id } = req.params;
+        const mitraId = req.user?.id;
+
+        console.log(`\n========== [OTW ORDER] ==========`);
+        console.log(`📝 Request params.id: ${id}`);
+
+        try {
+            connection = await db.getConnection();
+            await connection.beginTransaction();
+
+            const [orderRows] = await connection.query(
+                `SELECT o.*, u.name as customer_name FROM orders o WHERE o.id = ? AND o.mitra_id = ?`,
+                [id, mitraId]
+            );
+
+            if (orderRows.length === 0) {
+                await connection.rollback();
+                return res.status(404).json({
+                    success: false,
+                    message: 'Order tidak ditemukan'
+                });
+            }
+
+            const order = orderRows[0];
+
+            if (order.status !== 'pending') {
+                await connection.rollback();
+                return res.status(400).json({
+                    success: false,
+                    message: `Pesanan dengan status ${order.status} tidak dapat diubah ke OTW`
+                });
+            }
+
+            await connection.query(
+                'UPDATE orders SET status = ? WHERE id = ?',
+                ['otw', id]
+            );
+
+            await connection.commit();
+
+            // Kirim notifikasi ke customer
+            try {
+                await notificationService.sendOrderOtwNotificationToCustomer(
+                    order.customer_id,
+                    id,
+                    order.order_code
+                );
+            } catch (err) {
+                console.error('Error sending notification:', err.message);
+            }
+
+            return res.json({
+                success: true,
+                message: 'Status diperbarui: Dalam Perjalanan',
+                data: { order_id: parseInt(id), status: 'otw' }
+            });
+
+        } catch (error) {
+            if (connection) await connection.rollback();
+            console.error('Error in otwOrder:', error);
+            return res.status(500).json({ success: false, message: error.message });
+        } finally {
+            if (connection) connection.release();
+        }
+    },
     // 2. MITRA REJECT ORDER
     rejectOrder: async (req, res) => {
         let connection;
