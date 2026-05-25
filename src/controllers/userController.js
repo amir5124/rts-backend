@@ -2,6 +2,7 @@ const User = require('../models/userModel');
 const bcrypt = require('bcryptjs');
 const fs = require('fs');
 const path = require('path');
+const db = require('../config/db');
 
 const userController = {
     // 1. Ambil semua User
