@@ -6,10 +6,13 @@ const OrderController = {
     // 1. CREATE ORDER (Tanpa notifikasi - notifikasi dikirim saat payment success)
     createOrder: async (req, res) => {
         let connection;
-        const orderCode = `ORD-${Date.now()}`;
+        const timestamp = Date.now();
+        const orderCode = `ORD-${timestamp}`;
+        const partnerReff = `PAY-${timestamp}`; // 🔥 FORMAT SEDERHANA: PAY-{timestamp}
 
         try {
             console.log(`\n--- 🏁 MEMULAI PROSES ORDER: ${orderCode} ---`);
+            console.log(`📝 Partner Reff: ${partnerReff}`);
 
             const {
                 customer_id, mitra_id, service_id, location_info,
@@ -41,7 +44,7 @@ const OrderController = {
 
             const [orderResult] = await connection.query(queryInsert, valuesInsert);
             const orderId = orderResult.insertId;
-            console.log(`DB: Order disimpan (ID: ${orderId}).`);
+            console.log(`DB: Order disimpan (ID: ${orderId})`);
 
             // Get customer info for payment gateway
             const [customerRows] = await connection.query(
@@ -56,6 +59,7 @@ const OrderController = {
             const paymentResult = await PaymentController.requestPaymentGateway({
                 order_id: orderId,
                 order_code: orderCode,
+                partner_reff: partnerReff, // 🔥 Kirim partner_reff yang sudah dibuat
                 amount: order_info.total_bayar,
                 customer: customer,
                 method: payment_info.method_type,
@@ -65,14 +69,13 @@ const OrderController = {
             await connection.commit();
             console.log("DB: Transaksi BERHASIL di-commit.");
 
-            // 🔴 NOTIFIKASI DIHAPUS DARI SINI - akan dikirim saat payment success di PaymentController
-
             return res.json({
                 success: true,
                 order_code: orderCode,
                 order_id: orderId,
+                partner_reff: partnerReff,
                 payment_info: paymentResult,
-                notification_sent: false // Notifikasi akan dikirim setelah payment success
+                notification_sent: false
             });
 
         } catch (error) {
@@ -93,7 +96,6 @@ const OrderController = {
             }
         }
     },
-
     // 2. UPDATE ORDER STATUS (UNTUK MITRA & CUSTOMER)
     updateOrderStatus: async (req, res) => {
         let connection;

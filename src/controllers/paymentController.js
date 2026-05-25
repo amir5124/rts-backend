@@ -8,7 +8,8 @@ const PaymentController = {
      * REQUEST PEMBAYARAN KE GATEWAY
      */
     requestPaymentGateway: async (payload, tx = null) => {
-        const { order_id, order_code, amount, customer, method, bank_code } = payload;
+        // 🔥 Terima partner_reff dari parameter (TIDAK dibuat baru)
+        const { order_id, order_code, partner_reff, amount, customer, method, bank_code } = payload;
         const client = tx || db;
 
         try {
@@ -23,7 +24,7 @@ const PaymentController = {
             const rawBank = (bank_code || method || '').toLowerCase();
             const finalBankCode = bankMapping[rawBank] || '002';
 
-            const partner_reff = `PAY-ORD-${order_code}`;
+            // 🔥 Gunakan partner_reff dari parameter, JANGAN buat baru
             const expired = moment.tz('Asia/Jakarta').add(2, 'hours').format('YYYYMMDDHHmmss');
 
             let phone = (customer.phone || '081234567890').replace(/[^0-9]/g, '');
@@ -33,7 +34,7 @@ const PaymentController = {
             const linkquData = {
                 amount: Math.round(Number(amount)),
                 expired,
-                partner_reff,
+                partner_reff: partner_reff, // 🔥 Gunakan dari parameter
                 bank_code: finalBankCode,
                 method: method,
                 customer_id: String(customer.id || phone),
@@ -42,6 +43,8 @@ const PaymentController = {
                 customer_phone: phone,
                 url_callback: "https://api.siappgo.id/api/v1/payments/callback"
             };
+
+            console.log(`[Payment] 🚀 Requesting payment with partner_reff: ${partner_reff}`);
 
             let result;
             if (method && method.toUpperCase().includes('VA')) {
