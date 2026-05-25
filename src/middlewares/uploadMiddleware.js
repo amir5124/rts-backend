@@ -3,30 +3,30 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// 🔥 Gunakan path yang SAMA dengan server.js
-// JANGAN gunakan path.join(__dirname, '../uploads')
+// 🔥 PASTIKAN menggunakan UPLOAD_PATH dari environment
 const UPLOAD_BASE_PATH = process.env.UPLOAD_PATH || '/app/uploads';
 const PROFILES_PATH = path.join(UPLOAD_BASE_PATH, 'profiles');
 
-console.log(`📁 [UPLOAD] Using UPLOAD_BASE_PATH: ${UPLOAD_BASE_PATH}`);
-console.log(`📁 [UPLOAD] PROFILES_PATH: ${PROFILES_PATH}`);
+console.log(`\n========== [UPLOAD MIDDLEWARE] ==========`);
+console.log(`📁 UPLOAD_BASE_PATH: ${UPLOAD_BASE_PATH}`);
+console.log(`📁 PROFILES_PATH: ${PROFILES_PATH}`);
+console.log(`==========================================\n`);
 
 // Pastikan folder ada
 if (!fs.existsSync(PROFILES_PATH)) {
     fs.mkdirSync(PROFILES_PATH, { recursive: true });
-    console.log(`📁 [UPLOAD] Created directory: ${PROFILES_PATH}`);
+    console.log(`📁 Created directory: ${PROFILES_PATH}`);
 }
 
-// Konfigurasi storage multer
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        console.log(`📸 [UPLOAD] Saving to destination: ${PROFILES_PATH}`);
+        console.log(`📸 Saving file to: ${PROFILES_PATH}`);
         cb(null, PROFILES_PATH);
     },
     filename: function (req, file, cb) {
         const ext = path.extname(file.originalname);
         const filename = `${Date.now()}${ext}`;
-        console.log(`📸 [UPLOAD] Saving file as: ${filename}`);
+        console.log(`📸 Filename: ${filename}`);
         cb(null, filename);
     }
 });
