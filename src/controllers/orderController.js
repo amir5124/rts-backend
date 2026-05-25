@@ -1096,6 +1096,7 @@ const OrderController = {
     // ========== ENDPOINT UNTUK MITRA (ORDER MANAGEMENT) ==========
 
     // 1. MITRA ACCEPT ORDER
+    // 1. MITRA ACCEPT ORDER - DIPERBAIKI
     acceptOrder: async (req, res) => {
         let connection;
         const { id } = req.params;
@@ -1127,8 +1128,25 @@ const OrderController = {
             }
 
             const order = orderRows[0];
+            console.log(`✅ Current order status: ${order.status}`);
 
-            // 🔥 Status yang bisa diaccept: 'paid' atau 'pending_payment'
+            // 🔥 PERBAIKAN: Handle multiple status possibilities
+            // Jika sudah pending, return success tanpa update
+            if (order.status === 'pending') {
+                await connection.commit();
+                console.log(`ℹ️ Order already accepted (status: pending)`);
+                return res.json({
+                    success: true,
+                    message: 'Pesanan sudah diterima sebelumnya',
+                    data: {
+                        order_id: parseInt(id),
+                        status: 'pending',
+                        already_accepted: true
+                    }
+                });
+            }
+
+            // Status yang bisa diaccept
             const allowedStatuses = ['paid', 'pending_payment'];
 
             if (!allowedStatuses.includes(order.status)) {
@@ -1139,13 +1157,14 @@ const OrderController = {
                 });
             }
 
-            // 🔥 Ubah status ke 'pending' (bukan 'accepted')
+            // Update status ke 'pending'
             await connection.query(
                 'UPDATE orders SET status = ?, confirmed_at_mitra = NOW() WHERE id = ?',
                 ['pending', id]
             );
 
             await connection.commit();
+            console.log(`✅ Order ${id} status updated from ${order.status} to 'pending'`);
 
             try {
                 await notificationService.sendOrderConfirmedNotificationToCustomer(
@@ -1178,7 +1197,6 @@ const OrderController = {
             if (connection) connection.release();
         }
     },
-
     // 2. MITRA REJECT ORDER
     rejectOrder: async (req, res) => {
         let connection;
