@@ -117,77 +117,28 @@ class NotificationService {
     // ========== NOTIFIKASI PESANAN UNTUK MITRA ==========
 
     // Kirim notifikasi pesanan baru ke mitra (dari customer)
-    // services/notificationService.js
-
-    /**
-     * Kirim notifikasi pesanan baru ke mitra (dari customer)
-     * 🔥 Dengan validasi order_id
-     */
     async sendNewOrderNotificationToMitra(mitraId, orderId, customerName, serviceName, orderCode = null) {
-        // 🔥 VALIDASI: Pastikan orderId valid
-        const validMitraId = parseInt(mitraId);
-        const validOrderId = parseInt(orderId);
-
-        if (isNaN(validMitraId) || validMitraId <= 0) {
-            console.error(`❌ [NOTIF] Invalid mitraId: ${mitraId}`);
-            return {
-                success: false,
-                message: 'Invalid mitraId',
-                error: 'MITRA_ID_INVALID'
-            };
-        }
-
-        if (isNaN(validOrderId) || validOrderId <= 0) {
-            console.error(`❌ [NOTIF] Invalid orderId: ${orderId}`);
-            return {
-                success: false,
-                message: 'Invalid orderId',
-                error: 'ORDER_ID_INVALID'
-            };
-        }
-
-        console.log(`📢 [NOTIF] Preparing new order notification:`, {
-            mitraId: validMitraId,
-            orderId: validOrderId,
-            customerName: customerName?.substring(0, 30),
-            serviceName: serviceName?.substring(0, 30),
-            orderCode: orderCode || `ORD-${validOrderId}`
-        });
-
         const notificationData = {
             title: '📦 Pesanan Baru!',
-            message: `Halo, Anda mendapat pesanan baru dari ${customerName} untuk layanan ${serviceName}. Segera konfirmasi pesanan!`,
+            message: `Halo, Anda mendapat pesanan baru dari ${customerName} untuk layanan ${serviceName}. order id ${orderId} Segera konfirmasi pesanan!`,
             type: 'new_order_to_mitra'
         };
 
         const additionalData = {
             screen: 'orders_mitra',
             action: 'view_order',
-            order_id: validOrderId, // 🔥 Kirim sebagai NUMBER, bukan string
-            order_code: orderCode || `ORD-${validOrderId}`,
+            order_id: orderId.toString(),
+            order_code: orderCode || `ORD-${orderId}`,
             customer_name: customerName,
-            service_name: serviceName,
-            timestamp: Date.now().toString()
+            service_name: serviceName
         };
 
-        console.log(`📤 [NOTIF] Sending to user ${validMitraId} with data:`, {
-            order_id: additionalData.order_id,
-            order_code: additionalData.order_code,
-            screen: additionalData.screen
-        });
+        const result = await this.sendToUser(mitraId, notificationData, additionalData);
 
-        // Kirim push notification
-        const result = await this.sendToUser(validMitraId, notificationData, additionalData);
+        // Simpan ke database notifications
+        await this.saveNotificationToDatabase(mitraId, notificationData.title, notificationData.message, 'order');
 
-        // Simpan ke database notifications (opsional, jangan blokir jika gagal)
-        try {
-            await this.saveNotificationToDatabase(validMitraId, notificationData.title, notificationData.message, 'order');
-            console.log(`💾 [NOTIF] Saved to database for mitra ${validMitraId}`);
-        } catch (dbError) {
-            console.error(`⚠️ [NOTIF] Failed to save to database:`, dbError.message);
-        }
-
-        console.log(`✅ [NOTIF] New order notification sent to mitra ${validMitraId} for order ${validOrderId}`);
+        console.log(`📢 New order notification sent to mitra ${mitraId} for order ${orderId}`);
         return result;
     }
 
