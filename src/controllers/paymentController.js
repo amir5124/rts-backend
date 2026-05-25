@@ -132,9 +132,9 @@ const PaymentController = {
                     const customerName = payments[0].customer_name;
                     const totalAmount = payments[0].total_amount;
 
-                    // 2. Update Status Payment
+                    // 2. Update Status Payment 🔥 PERBAIKAN: gunakan payload_callback, bukan payload_response
                     await connection.query(
-                        `UPDATE payments SET status = 'SUCCESS', updated_at = NOW(), payload_response = ? WHERE partner_reff = ?`,
+                        `UPDATE payments SET status = 'SUCCESS', updated_at = NOW(), payload_callback = ? WHERE partner_reff = ?`,
                         [JSON.stringify(req.body), partner_reff]
                     );
 
@@ -171,9 +171,6 @@ const PaymentController = {
                     // 🔥 ========== KIRIM NOTIFIKASI KE CUSTOMER ==========
                     if (customerId) {
                         try {
-                            const formattedAmount = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(totalAmount);
-
-                            // Gunakan method yang sudah ada atau buat method baru
                             const customerResult = await notificationService.sendPaymentSuccessNotificationToCustomer(
                                 customerId,
                                 orderId,
@@ -196,6 +193,14 @@ const PaymentController = {
             } else {
                 await connection.rollback();
                 console.log(`📝 [CALLBACK] Reff ${partner_reff} status: ${statusUpper} - No action taken`);
+
+                // 🔥 Jika status bukan SUCCESS, tetap simpan callback untuk debugging
+                if (partner_reff) {
+                    await connection.query(
+                        `UPDATE payments SET payload_callback = ? WHERE partner_reff = ?`,
+                        [JSON.stringify(req.body), partner_reff]
+                    );
+                }
             }
 
             // LinkQu membutuhkan response OK agar tidak mengirim ulang callback
@@ -208,7 +213,6 @@ const PaymentController = {
             if (connection) connection.release();
         }
     },
-
     // controllers/PaymentController.js - Update fungsi checkStatus
 
     /**
