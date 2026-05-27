@@ -191,15 +191,30 @@ const LinkQuUtility = {
      * 🔥 PERBAIKAN: Check Status Pembayaran (Menggunakan GET method)
      * Mengikuti pola yang berhasil di project lain
      */
+    // utils/linkqu.js
     checkStatus: async (partnerReff) => {
         try {
             console.log(`[LinkQu] 🔍 Checking status for reff: ${partnerReff}`);
 
-            const response = await axios.get(`${config.baseUrl}/transaction/payment/checkstatus`, {
-                params: {
-                    username: config.username,
-                    partnerreff: partnerReff
-                },
+            // 🔥 PERBAIKAN: Gunakan POST method seperti di dokumentasi
+            const endpoint = '/transaction/inquiry';
+
+            const signatureData = {
+                partner_reff: String(partnerReff)
+            };
+
+            const signature = generateSignature(endpoint, 'POST', signatureData);
+
+            const payload = {
+                partner_reff: String(partnerReff),
+                username: config.username,
+                pin: config.pin,
+                signature: signature
+            };
+
+            console.log(`[LinkQu] Payload:`, JSON.stringify(payload, null, 2));
+
+            const response = await axios.post(`${config.baseUrl}${endpoint}`, payload, {
                 headers: {
                     'client-id': config.clientId,
                     'client-secret': config.clientSecret,
@@ -215,14 +230,14 @@ const LinkQuUtility = {
 
         } catch (error) {
             const errorData = error.response?.data || error.message;
-            console.error(`[LinkQu] ❌ Status check error for ${partnerReff}:`, errorData);
+            console.error(`[LinkQu] ❌ Status check error:`, errorData);
             logToFile(`STATUS CHECK ERROR ${partnerReff}`, errorData);
 
-            // Return default response agar tidak crash
             return {
-                status: 'PENDING',
-                response_code: '500',
-                response_desc: error.response?.data?.message || error.message || 'Gagal mengecek status'
+                rc: '500',
+                rd: error.response?.data?.message || error.message || 'Gagal mengecek status',
+                total: 0,
+                data: {}
             };
         }
     },
