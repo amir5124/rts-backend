@@ -171,6 +171,104 @@ const userController = {
         }
     },
 
+    // controllers/userController.js - Tambah fungsi baru
+    updateProfileWithBase64: async (req, res) => {
+        let connection;
+        const userId = req.params.id;
+        const { name, email, phone, profile_pic_base64 } = req.body;
+
+        console.log(`\n========== [UPDATE USER WITH BASE64] ==========`);
+        console.log(`📝 User ID: ${userId}`);
+        console.log(`📝 Base64 length: ${profile_pic_base64?.length || 0}`);
+
+        try {
+            connection = await db.getConnection();
+            await connection.beginTransaction();
+
+            // Cek user exists
+            const [users] = await connection.query(
+                'SELECT id, profile_pic FROM users WHERE id = ?',
+                [userId]
+            );
+
+            if (users.length === 0) {
+                await connection.rollback();
+                return res.status(404).json({
+                    success: false,
+                    message: 'User tidak ditemukan'
+                });
+            }
+
+            let newProfilePic = users[0].profile_pic;
+
+            // Handle base64 image
+            if (profile_pic_base64) {
+                try {
+                    // Extract base64 data
+                    const matches = profile_pic_base64.match(/^data:image\/([a-zA-Z0-9+_-]+);base64,(.+)$/);
+
+                    if (matches && matches.length === 3) {
+                        const imageType = matches[1];
+                        const base64Data = matches[2];
+                        const buffer = Buffer.from(base64Data, 'base64');
+
+                        // Tentukan extension
+                        let extension = 'jpg';
+                        if (imageType === 'png') extension = 'png';
+                        if (imageType === 'gif') extension = 'gif';
+                        if (imageType === 'webp') extension = 'webp';
+
+                        const filename = `profile_${Date.now()}.${extension}`;
+                        const filepath = path.join(PROFILES_PATH, filename);
+
+                        // Simpan file
+                        fs.writeFileSync(filepath, buffer);
+                        newProfilePic = filename;
+
+                        console.log(`✅ Image saved: ${filename} (${buffer.length} bytes)`);
+                    }
+                } catch (imageError) {
+                    console.error('Error processing image:', imageError);
+                }
+            }
+
+            // Update database
+            await connection.query(
+                `UPDATE users SET 
+                name = ?, 
+                email = ?, 
+                phone = ?, 
+                profile_pic = ? 
+             WHERE id = ?`,
+                [name, email, phone, newProfilePic, userId]
+            );
+
+            await connection.commit();
+
+            res.json({
+                success: true,
+                message: 'Profile berhasil diperbarui',
+                data: {
+                    id: parseInt(userId),
+                    name: name,
+                    email: email,
+                    phone: phone,
+                    profile_pic: newProfilePic
+                }
+            });
+
+        } catch (error) {
+            if (connection) await connection.rollback();
+            console.error('❌ Error:', error);
+            res.status(500).json({
+                success: false,
+                message: error.message || 'Terjadi kesalahan pada server'
+            });
+        } finally {
+            if (connection) connection.release();
+        }
+    },
+
     // 4. Update Status User (Aktif/Nonaktif)
     updateUserStatus: async (req, res) => {
         try {

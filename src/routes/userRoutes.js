@@ -25,6 +25,9 @@ router.get('/statistics', userController.getUserStatistics);
  */
 router.get('/:id', verifyToken, userController.getUserById);
 
+// routes/userRoutes.js - Tambah endpoint baru
+router.put('/:id/update-with-base64', userController.updateProfileWithBase64);
+
 /**
  * @route   PUT /api/users/:id
  * @desc    Update data profile (nama, email, phone, & foto)
