@@ -185,28 +185,30 @@ const PaymentController = {
         }
 
         try {
-            // 🔥 PERBAIKAN: Cari partner_reff yang benar di database
-            let partnerReff = reff;
-
-            // Query untuk mencari payment berdasarkan berbagai kemungkinan format
+            // 🔥 KRUSIAL: Cari partner_reff yang benar dari database
+            // Karena reff bisa dalam format ORD-xxx atau PAY-xxx
             const [payments] = await db.query(
-                `SELECT partner_reff, status, order_id 
-             FROM payments 
-             WHERE partner_reff = ? 
-                OR partner_reff = CONCAT('PAY-', ?)
-                OR partner_reff = REPLACE(?, 'ORD-', 'PAY-ORD-')
-                OR partner_reff LIKE CONCAT('%', ?)
+                `SELECT p.partner_reff, p.status, p.order_id, o.order_code
+             FROM payments p
+             LEFT JOIN orders o ON p.order_id = o.id
+             WHERE p.partner_reff = ? 
+                OR p.partner_reff = CONCAT('PAY-', ?)
+                OR o.order_code = ?
+                OR p.partner_reff LIKE CONCAT('%', REPLACE(?, 'ORD-', ''))
              LIMIT 1`,
                 [reff, reff, reff, reff]
             );
 
+            let partnerReff = reff;
+            let orderCode = reff;
+
             if (payments.length > 0) {
                 partnerReff = payments[0].partner_reff;
+                orderCode = payments[0].order_code || reff;
                 const paymentStatus = payments[0].status?.toUpperCase() || '';
 
-                console.log(`📝 Found payment record: ${partnerReff} with status: ${paymentStatus}`);
+                console.log(`📝 Found in DB: partner_reff=${partnerReff}, status=${paymentStatus}`);
 
-                // Jika sudah SUCCESS di database, return langsung
                 if (['SUCCESS', 'SETTLED', 'PAID'].includes(paymentStatus)) {
                     return res.json({
                         status: 'SUCCESS',
@@ -216,28 +218,39 @@ const PaymentController = {
                 }
             }
 
-            console.log(`🔍 [POLLING] Checking status with partnerReff: ${partnerReff}`);
+            // 🔥 PERBAIKAN: Gunakan partner_reff yang benar dari database
+            // Jika masih ORD-xxx, konversi ke PAY-xxx
+            let linkQuReff = partnerReff;
+            if (linkQuReff.startsWith('ORD-')) {
+                linkQuReff = `PAY-${linkQuReff}`;
+                console.log(`🔄 Converted reff for LinkQu: ${partnerReff} -> ${linkQuReff}`);
+            }
 
-            // Panggil LinkQu dengan partner_reff yang benar
-            const vendorResult = await LinkQu.checkStatus(partnerReff);
+            console.log(`🔍 [POLLING] Checking status with LinkQu reff: ${linkQuReff}`);
+
+            // Panggil LinkQu dengan reff yang benar
+            const vendorResult = await LinkQu.checkStatus(linkQuReff);
 
             console.log(`[LinkQu] Status check result:`, vendorResult);
 
-            // Parse response LinkQu
             const responseCode = vendorResult?.rc || vendorResult?.response_code || '';
             const isSuccess = responseCode === '00' || responseCode === '200';
-            const transactionFound = vendorResult?.total > 0 || Object.keys(vendorResult?.data || {}).length > 0;
+            const transactionFound = vendorResult?.total > 0 ||
+                vendorResult?.status === 'SUCCESS' ||
+                Object.keys(vendorResult?.data || {}).length > 0;
 
             if (isSuccess && transactionFound && payments.length > 0) {
                 // Update database
                 await db.query(
-                    `UPDATE payments SET status = 'SUCCESS', updated_at = NOW() WHERE partner_reff = ?`,
+                    `UPDATE payments SET status = 'SUCCESS', paid_at = NOW(), updated_at = NOW() 
+                 WHERE partner_reff = ?`,
                     [partnerReff]
                 );
 
                 if (payments[0].order_id) {
                     await db.query(
-                        `UPDATE orders SET status = 'paid' WHERE id = ?`,
+                        `UPDATE orders SET status = 'paid', updated_at = NOW() 
+                     WHERE id = ?`,
                         [payments[0].order_id]
                     );
                 }
@@ -249,7 +262,6 @@ const PaymentController = {
                 });
             }
 
-            // Masih PENDING
             return res.json({
                 status: 'PENDING',
                 message: vendorResult?.rd || 'Menunggu pembayaran',

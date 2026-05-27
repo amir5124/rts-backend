@@ -196,42 +196,66 @@ const LinkQuUtility = {
         try {
             console.log(`[LinkQu] 🔍 Checking status for reff: ${partnerReff}`);
 
-            // 🔥 PERBAIKAN: Gunakan POST method seperti di dokumentasi
-            const endpoint = '/transaction/inquiry';
+            // 🔥 PERBAIKAN: Gunakan endpoint yang benar sesuai dokumentasi
+            // Coba endpoint yang berbeda
+            const endpoints = [
+                '/transaction/inquiry',
+                '/transaction/payment/checkstatus',
+                '/v1/transaction/status'
+            ];
 
-            const signatureData = {
-                partner_reff: String(partnerReff)
+            let lastError = null;
+
+            for (const endpoint of endpoints) {
+                try {
+                    const signatureData = {
+                        partner_reff: String(partnerReff)
+                    };
+
+                    const signature = generateSignature(endpoint, 'POST', signatureData);
+
+                    const payload = {
+                        partner_reff: String(partnerReff),
+                        username: config.username,
+                        pin: config.pin,
+                        signature: signature
+                    };
+
+                    console.log(`[LinkQu] Trying endpoint: ${endpoint}`);
+                    console.log(`[LinkQu] Payload:`, JSON.stringify(payload, null, 2));
+
+                    const response = await axios.post(`${config.baseUrl}${endpoint}`, payload, {
+                        headers: {
+                            'client-id': config.clientId,
+                            'client-secret': config.clientSecret,
+                            'Content-Type': 'application/json'
+                        },
+                        timeout: 15000
+                    });
+
+                    if (response.data && (response.data.rc === '00' || response.data.status === 'SUCCESS')) {
+                        console.log(`[LinkQu] ✅ Success with endpoint: ${endpoint}`);
+                        return response.data;
+                    }
+
+                    lastError = response.data;
+                } catch (endpointError) {
+                    lastError = endpointError.response?.data || endpointError.message;
+                    console.log(`[LinkQu] Endpoint ${endpoint} failed:`, lastError);
+                }
+            }
+
+            // Jika semua endpoint gagal, return error
+            return {
+                rc: '404',
+                rd: lastError?.rd || lastError?.message || 'Transaksi tidak ditemukan',
+                total: 0,
+                data: {}
             };
-
-            const signature = generateSignature(endpoint, 'POST', signatureData);
-
-            const payload = {
-                partner_reff: String(partnerReff),
-                username: config.username,
-                pin: config.pin,
-                signature: signature
-            };
-
-            console.log(`[LinkQu] Payload:`, JSON.stringify(payload, null, 2));
-
-            const response = await axios.post(`${config.baseUrl}${endpoint}`, payload, {
-                headers: {
-                    'client-id': config.clientId,
-                    'client-secret': config.clientSecret,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 15000
-            });
-
-            console.log(`[LinkQu] ✅ Status check response:`, response.data);
-            logToFile(`STATUS CHECK ${partnerReff}`, response.data);
-
-            return response.data;
 
         } catch (error) {
             const errorData = error.response?.data || error.message;
             console.error(`[LinkQu] ❌ Status check error:`, errorData);
-            logToFile(`STATUS CHECK ERROR ${partnerReff}`, errorData);
 
             return {
                 rc: '500',
