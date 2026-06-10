@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const PaymentController = require('./paymentController');
 const notificationService = require('../services/notificationService');
+const walletService = require('../services/walletService');
 
 const OrderController = {
     // 1. CREATE ORDER (Tanpa notifikasi - notifikasi dikirim saat payment success)
@@ -1478,10 +1479,10 @@ const OrderController = {
 
             const [orderRows] = await connection.query(
                 `SELECT o.*, u.name as customer_name, s.service_name 
-             FROM orders o
-             LEFT JOIN users u ON o.customer_id = u.id
-             LEFT JOIN services s ON o.service_id = s.id
-             WHERE o.id = ? AND o.mitra_id = ?`,
+                 FROM orders o
+                 LEFT JOIN users u ON o.customer_id = u.id
+                 LEFT JOIN services s ON o.service_id = s.id
+                 WHERE o.id = ? AND o.mitra_id = ?`,
                 [id, mitraId]
             );
 
@@ -1496,7 +1497,6 @@ const OrderController = {
             const order = orderRows[0];
             console.log(`✅ Order found: ID=${order.id}, Code=${order.order_code}, Status=${order.status}`);
 
-            // 🔥 PERBAIKAN: Cek status 'ongoing' (bukan 'accepted')
             if (order.status !== 'ongoing') {
                 await connection.rollback();
                 return res.status(400).json({
@@ -1505,19 +1505,32 @@ const OrderController = {
                 });
             }
 
+            // 1. Update status order
             await connection.query(
                 'UPDATE orders SET status = ?, completed_at = NOW() WHERE id = ?',
                 ['completed', id]
             );
 
+            // 2. Update status payment
             await connection.query(
                 'UPDATE payments SET status = ? WHERE order_id = ?',
                 ['SUCCESS', id]
             );
 
-            await connection.commit();
-            console.log(`✅ Order ${id} completed!`);
+            // 3. Credit 80% earning ke wallet mitra (dalam transaksi yang sama)
+            const earningResult = await walletService.creditMitraEarning(
+                mitraId,
+                parseInt(id),
+                order.order_code,
+                parseFloat(order.total_amount),
+                connection
+            );
 
+            // 4. Commit semua sekaligus (atomic)
+            await connection.commit();
+            console.log(`✅ Order ${id} completed! Mitra earning: Rp ${earningResult?.mitraEarning}`);
+
+            // 5. Kirim notifikasi ke customer (di luar transaksi, gagal tidak rollback)
             try {
                 await notificationService.sendOrderCompletedNotificationToCustomer(
                     order.customer_id,
@@ -1534,7 +1547,12 @@ const OrderController = {
                 message: 'Pesanan berhasil diselesaikan',
                 data: {
                     order_id: parseInt(id),
-                    status: 'completed'
+                    status: 'completed',
+                    earning: earningResult ? {
+                        mitra_earning: earningResult.mitraEarning,
+                        platform_fee: earningResult.platformFee,
+                        wallet_balance: earningResult.balanceAfter
+                    } : null
                 }
             });
 
