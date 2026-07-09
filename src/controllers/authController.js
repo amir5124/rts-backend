@@ -151,7 +151,17 @@ exports.login = async (req, res) => {
             });
         }
 
-        // 4. Ambil informasi wallet
+        // 4. 🔒 Cek apakah akun ini adalah akun Mitra
+        // Endpoint login ini khusus untuk aplikasi Mitra, jadi role selain
+        // 'mitra' (misalnya 'customer') ditolak di sini.
+        if (user.role !== 'mitra') {
+            return res.status(403).json({
+                status: false,
+                message: "Akun ini bukan akun Mitra. Silakan gunakan aplikasi Customer atau hubungi admin."
+            });
+        }
+
+        // 5. Ambil informasi wallet
         const [wallets] = await db.execute(
             'SELECT balance, pending_balance FROM wallets WHERE user_id = ?',
             [user.id]
@@ -159,14 +169,14 @@ exports.login = async (req, res) => {
 
         const wallet = wallets[0] || { balance: 0, pending_balance: 0 };
 
-        // 5. Buat JWT Token
+        // 6. Buat JWT Token
         const token = jwt.sign(
             { id: user.id, role: user.role },
             process.env.JWT_SECRET,
             { expiresIn: '1d' }
         );
 
-        // 6. Response
+        // 7. Response
         res.json({
             status: true,
             message: "Login berhasil",
