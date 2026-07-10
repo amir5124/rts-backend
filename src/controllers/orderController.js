@@ -1025,12 +1025,10 @@ const OrderController = {
 
             // 🔥 Cek apakah order ini milik mitra yang login (opsional, untuk keamanan)
             if (order.mitra_id && order.mitra_id !== mitra_id) {
-                console.log(`⚠️ [ORDER] Order ${id} belongs to mitra ${order.mitra_id}, but user is ${mitra_id}`);
-                // Bisa return error atau tetap lanjut - tergantung kebijakan
-                // return res.status(403).json({
-                //     success: false,
-                //     message: 'Akses ditolak. Pesanan bukan milik Anda.'
-                // });
+                return res.status(403).json({
+                    success: false,
+                    message: 'Akses ditolak. Pesanan bukan milik Anda.'
+                });
             }
 
             console.log(`✅ [ORDER] Order found: ${order.order_code}, status: ${order.status}`);
