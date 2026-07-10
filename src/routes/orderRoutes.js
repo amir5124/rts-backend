@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const OrderController = require('../controllers/orderController');
-const { verifyToken, isMitra, isAdmin } = require('../middleware/authMiddleware'); // sesuaikan path
+const { verifyToken, isMitra, isAdmin } = require('../middlewares/auth'); // sesuaikan path
 
 // ==========================================
 // URL BASE: /api/v1/orders
