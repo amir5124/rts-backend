@@ -17,7 +17,6 @@ console.log(`📁 [MITRA] CERTIFICATES_PATH: ${CERTIFICATES_PATH}`);
 
 const mitraController = {
 
-    // Registrasi Mitra Baru
     registerMitra: async (req, res) => {
         let connection;
 
@@ -48,8 +47,11 @@ const mitraController = {
             connection = await db.getConnection();
             await connection.beginTransaction();
 
+            // FIX: jangan syaratkan role sudah 'mitra' — endpoint ini justru
+            // yang mengubah customer MENJADI mitra. Cukup pastikan user ada,
+            // aktif, dan belum berperan sebagai mitra sebelumnya.
             const [userCheck] = await connection.query(
-                'SELECT id, role FROM users WHERE id = ? AND role = "mitra"',
+                'SELECT id, role, is_active FROM users WHERE id = ?',
                 [user_id]
             );
 
@@ -57,7 +59,23 @@ const mitraController = {
                 await connection.rollback();
                 return res.status(404).json({
                     success: false,
-                    message: 'User mitra tidak ditemukan'
+                    message: 'User tidak ditemukan'
+                });
+            }
+
+            if (!userCheck[0].is_active) {
+                await connection.rollback();
+                return res.status(403).json({
+                    success: false,
+                    message: 'Akun tidak aktif'
+                });
+            }
+
+            if (userCheck[0].role === 'mitra') {
+                await connection.rollback();
+                return res.status(409).json({
+                    success: false,
+                    message: 'Akun ini sudah terdaftar sebagai mitra'
                 });
             }
 
@@ -84,7 +102,6 @@ const mitraController = {
 
                 if (isBase64 && (certificate_url.includes('base64') || certificate_url.length > 500)) {
                     try {
-                        // 🔥 Gunakan CERTIFICATES_PATH dari environment
                         if (!fs.existsSync(CERTIFICATES_PATH)) {
                             fs.mkdirSync(CERTIFICATES_PATH, { recursive: true });
                         }
@@ -157,11 +174,18 @@ const mitraController = {
                 bank_account_name || null
             ]);
 
+            // FIX: baru di sini role diubah jadi 'mitra' — status
+            // approve/pending dibedakan lewat is_verified, bukan role.
+            await connection.query(
+                "UPDATE users SET role = 'mitra' WHERE id = ?",
+                [user_id]
+            );
+
             await connection.commit();
 
             res.status(201).json({
                 success: true,
-                message: 'Registrasi mitra berhasil',
+                message: 'Registrasi mitra berhasil, menunggu verifikasi admin',
                 data: {
                     user_id: user_id,
                     specialization: specialization,
@@ -191,7 +215,6 @@ const mitraController = {
             if (connection) connection.release();
         }
     },
-
     // Check status registrasi mitra
     checkMitraStatus: async (req, res) => {
         let connection;
