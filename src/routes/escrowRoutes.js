@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const OrderController = require('../controllers/orderController');
-const authMiddleware = require('../middlewares/authMiddleware');
+const authMiddleware = require('../middlewares/auth');
 
 /**
  * 🔥 CUSTOMER KONFIRMASI PESANAN SELESAI
