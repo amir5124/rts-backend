@@ -1,3 +1,4 @@
+// controllers/mitraController.js
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
 const notificationService = require('../services/notificationService');
@@ -17,6 +18,9 @@ console.log(`📁 [MITRA] CERTIFICATES_PATH: ${CERTIFICATES_PATH}`);
 
 const mitraController = {
 
+    // ========================================================================
+    // 1. REGISTER MITRA
+    // ========================================================================
     registerMitra: async (req, res) => {
         let connection;
 
@@ -47,9 +51,6 @@ const mitraController = {
             connection = await db.getConnection();
             await connection.beginTransaction();
 
-            // FIX: jangan syaratkan role sudah 'mitra' — endpoint ini justru
-            // yang mengubah customer MENJADI mitra. Cukup pastikan user ada,
-            // aktif, dan belum berperan sebagai mitra sebelumnya.
             const [userCheck] = await connection.query(
                 'SELECT id, role, is_active FROM users WHERE id = ?',
                 [user_id]
@@ -92,7 +93,7 @@ const mitraController = {
                 });
             }
 
-            // 🔥 PERBAIKAN: Proses certificate_url dengan path yang benar
+            // Proses certificate_url
             let finalCertificateUrl = null;
 
             if (certificate_url) {
@@ -174,8 +175,6 @@ const mitraController = {
                 bank_account_name || null
             ]);
 
-            // FIX: baru di sini role diubah jadi 'mitra' — status
-            // approve/pending dibedakan lewat is_verified, bukan role.
             await connection.query(
                 "UPDATE users SET role = 'mitra' WHERE id = ?",
                 [user_id]
@@ -215,7 +214,10 @@ const mitraController = {
             if (connection) connection.release();
         }
     },
-    // Check status registrasi mitra
+
+    // ========================================================================
+    // 2. CHECK MITRA STATUS
+    // ========================================================================
     checkMitraStatus: async (req, res) => {
         let connection;
         const { user_id } = req.params;
@@ -291,7 +293,9 @@ const mitraController = {
         }
     },
 
-    // Dapatkan detail mitra berdasarkan user_id
+    // ========================================================================
+    // 3. GET MITRA DETAIL
+    // ========================================================================
     getMitraDetail: async (req, res) => {
         let connection;
         const { user_id } = req.params;
@@ -351,7 +355,9 @@ const mitraController = {
         }
     },
 
-    // Update profil mitra
+    // ========================================================================
+    // 4. UPDATE MITRA PROFILE
+    // ========================================================================
     updateMitraProfile: async (req, res) => {
         let connection;
         const { user_id } = req.params;
@@ -462,7 +468,9 @@ const mitraController = {
         }
     },
 
-    // Update user profile
+    // ========================================================================
+    // 5. UPDATE USER PROFILE
+    // ========================================================================
     updateUserProfile: async (req, res) => {
         let connection;
         const { user_id } = req.params;
@@ -536,7 +544,9 @@ const mitraController = {
         }
     },
 
-    // Toggle online status mitra
+    // ========================================================================
+    // 6. TOGGLE ONLINE STATUS
+    // ========================================================================
     toggleOnlineStatus: async (req, res) => {
         let connection;
         const { user_id } = req.params;
@@ -580,7 +590,9 @@ const mitraController = {
         }
     },
 
-    // Check kelengkapan profil mitra
+    // ========================================================================
+    // 7. CHECK MITRA PROFILE
+    // ========================================================================
     checkMitraProfile: async (req, res) => {
         const { user_id } = req.params;
 
@@ -635,7 +647,9 @@ const mitraController = {
         }
     },
 
-    // Get all therapists
+    // ========================================================================
+    // 8. GET ALL THERAPISTS
+    // ========================================================================
     getAllTherapists: async (req, res) => {
         let connection;
         const { verified, online } = req.query;
@@ -685,7 +699,9 @@ const mitraController = {
         }
     },
 
-    // Get therapists by service
+    // ========================================================================
+    // 9. GET THERAPISTS BY SERVICE
+    // ========================================================================
     getTherapistsByService: async (req, res) => {
         let connection;
         const { service_id } = req.params;
@@ -739,7 +755,9 @@ const mitraController = {
         }
     },
 
-    // Approve mitra registration (Admin only) - DENGAN NOTIFIKASI
+    // ========================================================================
+    // 10. APPROVE MITRA (ADMIN) - DENGAN NOTIFIKASI
+    // ========================================================================
     approveMitra: async (req, res) => {
         let connection;
         const { user_id } = req.params;
@@ -787,25 +805,26 @@ const mitraController = {
             } else {
                 // Kirim notifikasi berdasarkan aksi
                 if (is_verified && oldStatus === 0) {
-                    // Verifikasi mitra
+                    // 🔥 Verifikasi mitra (APPROVE)
                     await connection.query(
                         `INSERT INTO notifications (user_id, title, message, type, is_read) 
                          VALUES (?, ?, ?, ?, 0)`,
                         [user_id,
                             '✅ Akun Diverifikasi',
-                            'Selamat! Akun mitra Anda telah diverifikasi. Anda sekarang dapat mulai menerima pesanan.',
+                            `Selamat ${mitraName}! Akun mitra Anda telah diverifikasi. Anda sekarang dapat mulai menerima pesanan dari pelanggan.`,
                             'verification']
                     );
 
                     try {
                         const pushResult = await notificationService.sendVerificationNotification(user_id, mitraName);
                         notificationSent = pushResult.success;
+                        console.log(`✅ Verification notification sent to ${mitraName} (${user_id})`);
                     } catch (pushError) {
                         console.error('Push notification error:', pushError.message);
                     }
 
                 } else if (!is_verified && oldStatus === 1) {
-                    // Pembatalan verifikasi (unverify)
+                    // 🔥 Pembatalan verifikasi (UNVERIFY)
                     const unverifyMessage = rejection_reason
                         ? `Verifikasi akun mitra Anda dibatalkan. Alasan: ${rejection_reason}`
                         : 'Verifikasi akun mitra Anda telah dibatalkan. Silakan hubungi admin untuk informasi lebih lanjut.';
@@ -822,6 +841,7 @@ const mitraController = {
                     try {
                         const pushResult = await notificationService.sendUnverificationNotification(user_id, mitraName, rejection_reason);
                         notificationSent = pushResult.success;
+                        console.log(`✅ Unverification notification sent to ${mitraName} (${user_id})`);
                     } catch (pushError) {
                         console.error('Push notification error:', pushError.message);
                     }
@@ -863,7 +883,9 @@ const mitraController = {
         }
     },
 
-    // Get all mitra registrations
+    // ========================================================================
+    // 11. GET ALL MITRA REGISTRATIONS (ADMIN)
+    // ========================================================================
     getAllMitraRegistrations: async (req, res) => {
         let connection;
         const { status, search } = req.query;
@@ -1004,7 +1026,9 @@ const mitraController = {
         }
     },
 
-    // Get detailed mitra registration by ID
+    // ========================================================================
+    // 12. GET MITRA REGISTRATION DETAIL (ADMIN)
+    // ========================================================================
     getMitraRegistrationDetail: async (req, res) => {
         let connection;
         const { user_id } = req.params;
@@ -1070,7 +1094,9 @@ const mitraController = {
         }
     },
 
-    // Delete mitra (admin only) - DENGAN NOTIFIKASI
+    // ========================================================================
+    // 13. DELETE MITRA (ADMIN) - DENGAN NOTIFIKASI
+    // ========================================================================
     deleteMitra: async (req, res) => {
         let connection;
         const { user_id } = req.params;
@@ -1098,7 +1124,7 @@ const mitraController = {
 
             const mitraName = mitraData[0].name || 'Mitra';
 
-            // Kirim notifikasi sebelum menghapus/disable akun
+            // 🔥 Kirim notifikasi sebelum menghapus/disable akun
             const [tableCheck] = await connection.query(
                 "SHOW TABLES LIKE 'notifications'"
             );
@@ -1109,13 +1135,14 @@ const mitraController = {
                      VALUES (?, ?, ?, ?, 0)`,
                     [user_id,
                         '🗑️ Akun Mitra Dinonaktifkan',
-                        `Akun mitra Anda telah dinonaktifkan oleh administrator. Akun Anda telah diubah menjadi pelanggan. Silakan hubungi admin untuk informasi lebih lanjut.`,
+                        `Halo ${mitraName}, akun mitra Anda telah dinonaktifkan oleh administrator. Akun Anda telah diubah menjadi pelanggan. Silakan hubungi admin untuk informasi lebih lanjut.`,
                         'account_deactivation']
                 );
 
-                // Kirim push notification
+                // 🔥 Kirim push notification
                 try {
                     await notificationService.sendAccountDeactivationNotification(user_id, mitraName);
+                    console.log(`✅ Deactivation notification sent to ${mitraName} (${user_id})`);
                 } catch (pushError) {
                     console.error('Push notification error:', pushError.message);
                 }
@@ -1157,7 +1184,9 @@ const mitraController = {
         }
     },
 
-    // Dashboard mitra
+    // ========================================================================
+    // 14. GET DASHBOARD MITRA
+    // ========================================================================
     getDashboard: async (req, res) => {
         let connection;
         const { user_id } = req.params;
