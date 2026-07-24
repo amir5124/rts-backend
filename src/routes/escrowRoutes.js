@@ -2,109 +2,77 @@
 const express = require('express');
 const router = express.Router();
 
-// 🔥 IMPORT DENGAN TRY-CATCH UNTUK MENGHINDARI ERROR
-let OrderController;
-let authMiddleware;
-let EscrowService;
+// 🔥 IMPORT CONTROLLER & SERVICE
+const OrderController = require('../controllers/orderController');
+const EscrowService = require('../services/escrowService');
 
-try {
-    OrderController = require('../controllers/orderController');
-    console.log('✅ OrderController loaded');
-} catch (error) {
-    console.error('❌ Failed to load OrderController:', error.message);
-    OrderController = {};
-}
+// 🔥 IMPORT AUTH MIDDLEWARE
+const { verifyToken, isAdmin } = require('../middlewares/auth');
 
-try {
-    authMiddleware = require('../middlewares/auth');
-    console.log('✅ AuthMiddleware loaded');
-} catch (error) {
-    console.error('❌ Failed to load authMiddleware:', error.message);
-    // 🔥 FALLBACK: Buat middleware dummy
-    authMiddleware = (req, res, next) => {
-        req.user = { id: 1, name: 'Admin', role: 'admin' };
-        next();
-    };
-}
+console.log('🔍 verifyToken type:', typeof verifyToken);
+console.log('🔍 isAdmin type:', typeof isAdmin);
 
-try {
-    EscrowService = require('../services/escrowService');
-    console.log('✅ EscrowService loaded');
-} catch (error) {
-    console.error('❌ Failed to load EscrowService:', error.message);
-    EscrowService = {
-        releaseEscrowToMitra: async () => ({ success: true, message: 'Mock release' }),
-        processAutoRelease: async () => ({ processed: 0, message: 'Mock process' })
-    };
-}
-
-// 🔥 CEK METHOD (SEKARANG SUDAH ADA DI ORDER CONTROLLER)
+// 🔥 CEK METHOD DI ORDER CONTROLLER
 const confirmOrderCompletion = OrderController.confirmOrderCompletion;
 const getOrderReleaseStatus = OrderController.getOrderReleaseStatus;
 
 console.log('🔍 confirmOrderCompletion type:', typeof confirmOrderCompletion);
 console.log('🔍 getOrderReleaseStatus type:', typeof getOrderReleaseStatus);
-console.log('🔍 authMiddleware type:', typeof authMiddleware);
 
 // ========================================================================
 // 🔥 ROUTE 1: Customer Confirm Order Completion
+// POST /api/v1/escrow/orders/:id/confirm-completion
+// Header: Authorization: Bearer <token>
 // ========================================================================
-if (typeof authMiddleware === 'function') {
-    if (typeof confirmOrderCompletion === 'function') {
-        router.post(
-            '/orders/:id/confirm-completion',
-            authMiddleware,
-            confirmOrderCompletion
-        );
-        console.log('✅ Route registered: POST /orders/:id/confirm-completion');
-    } else {
-        console.warn('⚠️ confirmOrderCompletion is not a function, using fallback');
-        router.post('/orders/:id/confirm-completion', authMiddleware, (req, res) => {
-            res.status(501).json({
-                success: false,
-                message: 'Feature coming soon: confirm order completion'
-            });
-        });
-    }
+if (typeof confirmOrderCompletion === 'function') {
+    router.post(
+        '/orders/:id/confirm-completion',
+        verifyToken,  // 🔥 Gunakan verifyToken
+        confirmOrderCompletion
+    );
+    console.log('✅ Route registered: POST /orders/:id/confirm-completion');
 } else {
-    console.error('❌ authMiddleware is not a function!');
-    router.post('/orders/:id/confirm-completion', (req, res) => {
-        res.status(401).json({ success: false, message: 'Auth middleware not configured' });
+    console.warn('⚠️ confirmOrderCompletion not found, using fallback');
+    router.post('/orders/:id/confirm-completion', verifyToken, (req, res) => {
+        res.status(501).json({
+            success: false,
+            message: 'Feature coming soon: confirm order completion'
+        });
     });
 }
 
 // ========================================================================
 // 🔥 ROUTE 2: Get Order Release Status
+// GET /api/v1/escrow/orders/:id/release-status
+// Header: Authorization: Bearer <token>
 // ========================================================================
-if (typeof authMiddleware === 'function') {
-    if (typeof getOrderReleaseStatus === 'function') {
-        router.get(
-            '/orders/:id/release-status',
-            authMiddleware,
-            getOrderReleaseStatus
-        );
-        console.log('✅ Route registered: GET /orders/:id/release-status');
-    } else {
-        console.warn('⚠️ getOrderReleaseStatus is not a function, using fallback');
-        router.get('/orders/:id/release-status', authMiddleware, (req, res) => {
-            res.status(501).json({
-                success: false,
-                message: 'Feature coming soon: get release status'
-            });
-        });
-    }
+if (typeof getOrderReleaseStatus === 'function') {
+    router.get(
+        '/orders/:id/release-status',
+        verifyToken,  // 🔥 Gunakan verifyToken
+        getOrderReleaseStatus
+    );
+    console.log('✅ Route registered: GET /orders/:id/release-status');
 } else {
-    console.error('❌ authMiddleware is not a function!');
-    router.get('/orders/:id/release-status', (req, res) => {
-        res.status(401).json({ success: false, message: 'Auth middleware not configured' });
+    console.warn('⚠️ getOrderReleaseStatus not found, using fallback');
+    router.get('/orders/:id/release-status', verifyToken, (req, res) => {
+        res.status(501).json({
+            success: false,
+            message: 'Feature coming soon: get release status'
+        });
     });
 }
 
 // ========================================================================
-// 🔥 ROUTE 3: Admin Force Release
+// 🔥 ROUTE 3: Admin Force Release Escrow
+// POST /api/v1/escrow/admin/orders/:id/force-release
+// Header: Authorization: Bearer <token> (Admin only)
 // ========================================================================
-if (typeof authMiddleware === 'function') {
-    router.post('/admin/orders/:id/force-release', authMiddleware, async (req, res) => {
+router.post(
+    '/admin/orders/:id/force-release',
+    verifyToken,  // 🔥 Validasi token dulu
+    isAdmin,      // 🔥 Baru cek admin
+    async (req, res) => {
         try {
             const { id } = req.params;
             const result = await EscrowService.releaseEscrowToMitra(id, 'admin_force');
@@ -120,15 +88,20 @@ if (typeof authMiddleware === 'function') {
                 message: error.message || 'Failed to force release escrow'
             });
         }
-    });
-    console.log('✅ Route registered: POST /admin/orders/:id/force-release');
-}
+    }
+);
+console.log('✅ Route registered: POST /admin/orders/:id/force-release');
 
 // ========================================================================
-// 🔥 ROUTE 4: Admin Run Auto-Release
+// 🔥 ROUTE 4: Admin Run Auto-Release Manually
+// POST /api/v1/escrow/admin/run-auto-release
+// Header: Authorization: Bearer <token> (Admin only)
 // ========================================================================
-if (typeof authMiddleware === 'function') {
-    router.post('/admin/run-auto-release', authMiddleware, async (req, res) => {
+router.post(
+    '/admin/run-auto-release',
+    verifyToken,  // 🔥 Validasi token dulu
+    isAdmin,      // 🔥 Baru cek admin
+    async (req, res) => {
         try {
             const result = await EscrowService.processAutoRelease();
             res.json({
@@ -143,17 +116,19 @@ if (typeof authMiddleware === 'function') {
                 message: error.message || 'Failed to process auto-release'
             });
         }
-    });
-    console.log('✅ Route registered: POST /admin/run-auto-release');
-}
+    }
+);
+console.log('✅ Route registered: POST /admin/run-auto-release');
 
 // ========================================================================
 // 🔥 ROUTE 5: Health Check (tanpa auth)
+// GET /api/v1/escrow/health
 // ========================================================================
 router.get('/health', (req, res) => {
     res.json({
         success: true,
         message: 'Escrow routes are working',
+        timestamp: new Date().toISOString(),
         features: {
             confirm_completion: typeof confirmOrderCompletion === 'function',
             release_status: typeof getOrderReleaseStatus === 'function',

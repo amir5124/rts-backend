@@ -177,19 +177,29 @@ app.use((err, req, res, next) => {
 });
 
 // =============================================
-// 7. CRONJOB - ESCROW AUTO RELEASE
+// 7. CRONJOB - ESCROW AUTO RELEASE (DIPERBAIKI)
 // =============================================
 let escrowCronJob = null;
+let isCronRunning = false;
 
 const startEscrowCron = () => {
     try {
         // Cek apakah cron sudah di-start
-        if (escrowCronJob) {
+        if (isCronRunning) {
             console.log('⚠️ Escrow cron job already running, skipping...');
             return;
         }
 
-        const cron = require('node-cron');
+        // 🔥 Cek apakah node-cron terinstall
+        let cron;
+        try {
+            cron = require('node-cron');
+        } catch (e) {
+            console.log('⚠️ node-cron not installed, escrow auto-release disabled');
+            console.log('💡 Install with: npm install node-cron');
+            return;
+        }
+
         const EscrowService = require('./src/services/escrowService');
 
         // 🔥 Jalankan setiap 5 menit
@@ -200,24 +210,35 @@ const startEscrowCron = () => {
                 const result = await EscrowService.processAutoRelease();
                 if (result.processed > 0) {
                     console.log(`✅ Escrow auto-release completed: ${result.processed} orders processed`);
-                } else {
-                    console.log(`ℹ️ No orders pending auto-release`);
                 }
             } catch (error) {
                 console.error('❌ Escrow auto-release error:', error.message);
             }
         });
 
+        isCronRunning = true;
         console.log(`✅ Escrow cron job started (every 5 minutes)`);
-        console.log(`📅 Next run: ${escrowCronJob.nextDate().toISOString()}`);
 
-        // Jalankan sekali saat startup untuk mengecek pending orders
+        // 🔥 Tampilkan next run dengan cara aman (FIX: nextDate error)
+        try {
+            // node-cron v3+ menggunakan getNextDate()
+            if (typeof escrowCronJob.getNextDate === 'function') {
+                const nextDate = escrowCronJob.getNextDate();
+                console.log(`📅 Next run: ${nextDate ? nextDate.toISOString() : 'unknown'}`);
+            } else {
+                console.log(`📅 Cron job scheduled (next run in ~5 minutes)`);
+            }
+        } catch (e) {
+            console.log(`📅 Cron job scheduled (next run in ~5 minutes)`);
+        }
+
+        // 🔥 Jalankan sekali saat startup (setelah 5 detik)
         setTimeout(async () => {
             console.log(`🔄 [STARTUP] Running initial escrow check...`);
             try {
                 const EscrowService = require('./src/services/escrowService');
                 const result = await EscrowService.processAutoRelease();
-                console.log(`✅ Initial escrow check completed: ${result.processed} orders processed`);
+                console.log(`✅ Initial escrow check completed: ${result.processed || 0} orders processed`);
             } catch (error) {
                 console.error('❌ Initial escrow check error:', error.message);
             }
@@ -262,8 +283,12 @@ const gracefulShutdown = async () => {
 
     // Stop cron job
     if (escrowCronJob) {
-        escrowCronJob.stop();
-        console.log('✅ Escrow cron job stopped');
+        try {
+            escrowCronJob.stop();
+            console.log('✅ Escrow cron job stopped');
+        } catch (error) {
+            console.error('❌ Error stopping cron job:', error.message);
+        }
     }
 
     // Close server
