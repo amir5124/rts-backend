@@ -588,6 +588,44 @@ class NotificationService {
         return result;
     }
 
+    /**
+     * 🔥 TAMBAHAN: Notifikasi ke customer: Pengingat segera membayar (saat payment dibuat)
+     * Dipanggil dari PaymentController.requestPaymentGateway setelah payment berhasil dibuat di gateway
+     */
+    async sendPaymentReminderNotificationToCustomer(customerId, orderId, orderCode, amount, paymentInfo = {}) {
+        const formattedAmount = new Intl.NumberFormat('id-ID', {
+            style: 'currency',
+            currency: 'IDR'
+        }).format(amount);
+
+        const methodText = paymentInfo.vaNumber
+            ? `ke Virtual Account ${paymentInfo.vaNumber}`
+            : (paymentInfo.qrisUrl ? 'via QRIS' : '');
+
+        const notificationData = {
+            title: '💳 Segera Selesaikan Pembayaran',
+            message: `Pesanan ${orderCode} menunggu pembayaran sebesar ${formattedAmount} ${methodText}. Segera bayar sebelum batas waktu habis.`.trim(),
+            type: 'payment_reminder_to_customer'
+        };
+
+        const additionalData = {
+            screen: 'payment',
+            action: 'pay_now',
+            order_id: orderId.toString(),
+            order_code: orderCode,
+            amount: amount.toString(),
+            method: paymentInfo.method || '',
+            va_number: paymentInfo.vaNumber || '',
+            qris_url: paymentInfo.qrisUrl || '',
+            expired_at: paymentInfo.expired_at || '',
+            status: 'pending_payment'
+        };
+
+        const result = await this.sendToUser(customerId, notificationData, additionalData);
+        console.log(`📢 Payment reminder notification sent to customer ${customerId} for order ${orderId}`);
+        return result;
+    }
+
     // ========================================================================
     // 8. NOTIFIKASI VERIFIKASI AKUN
     // ========================================================================

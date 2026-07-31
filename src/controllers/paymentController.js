@@ -75,6 +75,18 @@ const PaymentController = {
                 ]
             );
 
+            // 🔥 TAMBAHAN: Kirim notifikasi pengingat pembayaran ke customer
+            // Dikirim setelah payment berhasil dibuat di LinkQu & tersimpan di DB
+            if (customer && customer.id) {
+                notificationService.sendPaymentReminderNotificationToCustomer(
+                    customer.id,
+                    order_id,
+                    order_code,
+                    linkquData.amount,
+                    { vaNumber, qrisUrl, method, expired_at: mysqlExpired }
+                ).catch(err => console.error('[Payment] ⚠️ Notif reminder error:', err.message));
+            }
+
             return { vaNumber, qrisUrl, partner_reff };
         } catch (error) {
             console.error("[Payment] ❌ Error requestPaymentGateway:", error.message);
