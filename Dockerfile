@@ -24,4 +24,4 @@ USER nodejs
 EXPOSE 3000
 
 # Start aplikasi
-CMD ["node", "server.js"]
+CMD ["node", "app.js"]
