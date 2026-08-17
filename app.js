@@ -12,6 +12,44 @@ const fs = require('fs');
 // =============================================
 dotenv.config();
 
+// 🔥 🔥 🔥 VALIDASI KRITICAL: Cek JWT_SECRET
+console.log('\n🔐 ========== ENVIRONMENT VALIDATION ==========');
+console.log(`🔐 NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
+console.log(`🔐 PORT: ${process.env.PORT || 5000}`);
+
+// 🔥 VALIDASI JWT_SECRET
+if (!process.env.JWT_SECRET) {
+    console.error('❌ FATAL ERROR: JWT_SECRET tidak ditemukan di environment variables!');
+    console.error('⚠️  Pastikan file .env ada dan berisi: JWT_SECRET=your_secret_key');
+    console.error('⚠️  Atau set environment variable JWT_SECRET di platform deployment');
+    
+    // 🔥 Untuk development, bisa pakai fallback (TAPI TIDAK UNTUK PRODUCTION!)
+    if (process.env.NODE_ENV === 'development') {
+        console.warn('⚠️  DEVELOPMENT MODE: Menggunakan fallback JWT_SECRET');
+        process.env.JWT_SECRET = 'dev_secret_key_12345_for_testing_only';
+        console.warn('⚠️  WARNING: Ini hanya untuk development!');
+    } else {
+        // 🔥 Di production, stop aplikasi jika JWT_SECRET tidak ada
+        console.error('❌ Production mode: JWT_SECRET wajib diisi!');
+        process.exit(1);
+    }
+} else {
+    console.log('✅ JWT_SECRET: TERBACA');
+}
+
+// 🔥 VALIDASI DATABASE
+if (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_NAME) {
+    console.error('❌ ERROR: Database configuration tidak lengkap!');
+    console.error('⚠️  Pastikan DB_HOST, DB_USER, DB_NAME terisi di .env');
+    if (process.env.NODE_ENV === 'production') {
+        process.exit(1);
+    }
+} else {
+    console.log('✅ Database config: TERBACA');
+}
+
+console.log('================================================\n');
+
 const app = express();
 
 // =============================================
@@ -144,11 +182,22 @@ app.get('/', (req, res) => {
         message: "Bone & Joint Massage API",
         env: process.env.NODE_ENV,
         version: "1.0.0",
+        jwt_configured: !!process.env.JWT_SECRET,
         features: {
             escrow_auto_release: "active",
             notification: "active",
             wallet: "active"
         }
+    });
+});
+
+// Endpoint untuk cek status JWT (debug)
+app.get('/health/jwt', (req, res) => {
+    res.json({
+        success: true,
+        jwt_secret_exists: !!process.env.JWT_SECRET,
+        jwt_secret_length: process.env.JWT_SECRET ? process.env.JWT_SECRET.length : 0,
+        environment: process.env.NODE_ENV || 'development'
     });
 });
 
@@ -177,7 +226,7 @@ app.use((err, req, res, next) => {
 });
 
 // =============================================
-// 7. CRONJOB - ESCROW AUTO RELEASE (DIPERBAIKI)
+// 7. CRONJOB - ESCROW AUTO RELEASE
 // =============================================
 let escrowCronJob = null;
 let isCronRunning = false;
@@ -219,9 +268,8 @@ const startEscrowCron = () => {
         isCronRunning = true;
         console.log(`✅ Escrow cron job started (every 5 minutes)`);
 
-        // 🔥 Tampilkan next run dengan cara aman (FIX: nextDate error)
+        // 🔥 Tampilkan next run dengan cara aman
         try {
-            // node-cron v3+ menggunakan getNextDate()
             if (typeof escrowCronJob.getNextDate === 'function') {
                 const nextDate = escrowCronJob.getNextDate();
                 console.log(`📅 Next run: ${nextDate ? nextDate.toISOString() : 'unknown'}`);
@@ -260,14 +308,15 @@ const startEscrowCron = () => {
 const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
     console.log(`
-    =============================================
+    ════════════════════════════════════════════════
     🚀 Server berjalan di port: ${PORT}
     🛠️  Mode: ${process.env.NODE_ENV || 'development'}
     📅 Time: ${new Date().toLocaleString('id-ID')}
+    🔐 JWT: ${process.env.JWT_SECRET ? '✅ Terkonfigurasi' : '❌ TIDAK ADA!'}
     📁 Uploads directory: ${UPLOAD_BASE_PATH}
     📁 Profiles directory: ${PROFILES_PATH}
     📁 Certificates directory: ${CERTIFICATES_PATH}
-    =============================================
+    ════════════════════════════════════════════════
     `);
 
     // 🔥 Start Escrow Cron Job
