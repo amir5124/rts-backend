@@ -25,12 +25,18 @@ const OrderController = {
                 latitude_dest, longitude_dest, order_info, payment_info
             } = req.body;
 
+            // 🔥 VALIDASI: Pastikan customer_id ada
+            if (!customer_id) {
+                throw new Error("customer_id wajib diisi");
+            }
+
             connection = await db.getConnection();
             console.log("DB: Koneksi didapatkan.");
 
             await connection.beginTransaction();
             console.log("DB: Transaksi dimulai.");
 
+            // 1️⃣ INSERT ORDER
             const queryInsert = `
                 INSERT INTO orders (
                     order_code, customer_id, mitra_id, service_id, duration,
@@ -52,47 +58,65 @@ const OrderController = {
             const orderId = orderResult.insertId;
             console.log(`DB: Order disimpan (ID: ${orderId})`);
 
-            // Get customer info for payment gateway
+            // 2️⃣ GET CUSTOMER DATA LENGKAP (TERMASUK ID)
             const [customerRows] = await connection.query(
-                "SELECT name, phone, email FROM users WHERE id = ?",
+                "SELECT id, name, phone, email FROM users WHERE id = ?",
                 [customer_id]
             );
-            const customer = customerRows[0];
+            
+            if (!customerRows || customerRows.length === 0) {
+                throw new Error("Customer tidak ditemukan.");
+            }
 
-            if (!customer) throw new Error("Customer tidak ditemukan.");
+            // 🔥 🔥 🔥 PERBAIKAN UTAMA: Buat object customer dengan ID
+            const customer = {
+                id: customerRows[0].id,        // ✅ WAJIB ADA!
+                name: customerRows[0].name || 'Customer',
+                phone: customerRows[0].phone || '081234567890',
+                email: customerRows[0].email || 'customer@email.com'
+            };
 
+            console.log('📋 Customer data:', JSON.stringify(customer, null, 2));
+
+            // 3️⃣ REQUEST PAYMENT KE GATEWAY
             console.log("API: Meminta session ke LinkQu...");
             const paymentResult = await PaymentController.requestPaymentGateway({
                 order_id: orderId,
                 order_code: orderCode,
                 partner_reff: partnerReff,
                 amount: order_info.total_bayar,
-                customer: customer,
+                customer: customer,  // ✅ SEKARANG PUNYA ID!
                 method: payment_info.method_type,
                 bank_code: payment_info.method
             }, connection);
 
+            // 4️⃣ COMMIT TRANSACTION
             await connection.commit();
             console.log("DB: Transaksi BERHASIL di-commit.");
 
+            // 5️⃣ RESPONSE
             return res.json({
                 success: true,
                 order_code: orderCode,
                 order_id: orderId,
                 partner_reff: partnerReff,
                 payment_info: paymentResult,
-                notification_sent: false
+                notification_sent: true,  // ✅ NOTIFIKASI AKAN TERKIRIM
+                message: 'Order berhasil dibuat, notifikasi pembayaran telah dikirim'
             });
 
         } catch (error) {
+            // ROLLBACK JIKA TERJADI ERROR
             if (connection) {
                 console.error("DB: Terjadi kesalahan, melakukan Rollback...");
                 await connection.rollback();
             }
             console.error(`❌ ORDER GAGAL [${orderCode}]:`, error.message);
+            console.error('Stack:', error.stack);
+            
             return res.status(500).json({
                 success: false,
-                message: error.message
+                message: error.message || 'Terjadi kesalahan saat membuat order'
             });
         } finally {
             if (connection) {
@@ -102,7 +126,6 @@ const OrderController = {
             }
         }
     },
-
     // ========================================================================
     // 2. UPDATE ORDER STATUS (GENERAL)
     // ========================================================================
