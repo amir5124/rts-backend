@@ -12,6 +12,11 @@ const PaymentController = {
         const { order_id, order_code, partner_reff, amount, customer, method, bank_code } = payload;
         const client = tx || db;
 
+        // 🐛 DEBUG: Cek isi payload yang diterima, khususnya object customer
+        console.log('[Payment] 🐛 DEBUG payload masuk:', JSON.stringify({
+            order_id, order_code, partner_reff, amount, method, bank_code, customer
+        }, null, 2));
+
         try {
             const bankMapping = {
                 'va_bni': '009', 'bni': '009', 'BNI': '009',
@@ -77,14 +82,32 @@ const PaymentController = {
 
             // 🔥 TAMBAHAN: Kirim notifikasi pengingat pembayaran ke customer
             // Dikirim setelah payment berhasil dibuat di LinkQu & tersimpan di DB
+
+            // 🐛 DEBUG: Cek kondisi sebelum notif reminder dipanggil
+            console.log('[Payment] 🐛 DEBUG cek kondisi notif reminder:', {
+                customerExists: !!customer,
+                customerId: customer?.id,
+                customerIdType: typeof customer?.id,
+                willSendNotif: !!(customer && customer.id)
+            });
+
             if (customer && customer.id) {
+                console.log(`[Payment] 🐛 DEBUG -> Memanggil sendPaymentReminderNotificationToCustomer untuk customer.id=${customer.id}`);
                 notificationService.sendPaymentReminderNotificationToCustomer(
                     customer.id,
                     order_id,
                     order_code,
                     linkquData.amount,
                     { vaNumber, qrisUrl, method, expired_at: mysqlExpired }
-                ).catch(err => console.error('[Payment] ⚠️ Notif reminder error:', err.message));
+                )
+                    .then(res => {
+                        // 🐛 DEBUG: Lihat hasil pengiriman notif (sukses/gagal device/dsb)
+                        console.log('[Payment] 🐛 DEBUG hasil sendPaymentReminderNotificationToCustomer:', res);
+                    })
+                    .catch(err => console.error('[Payment] ⚠️ Notif reminder error:', err.message));
+            } else {
+                // 🐛 DEBUG: Ini akan muncul kalau notif TIDAK dikirim karena customer/customer.id kosong
+                console.warn('[Payment] 🐛 DEBUG -> Notif reminder DILEWATI karena customer atau customer.id tidak ada. customer =', JSON.stringify(customer));
             }
 
             return { vaNumber, qrisUrl, partner_reff };
@@ -122,6 +145,8 @@ const PaymentController = {
             );
 
             if (payments.length === 0) {
+                // 🐛 DEBUG: Callback masuk tapi partner_reff tidak ketemu di DB
+                console.warn(`[Callback] 🐛 DEBUG -> partner_reff "${partner_reff}" tidak ditemukan di tabel payments. Rollback & abaikan.`);
                 await connection.rollback();
                 return res.status(200).json({ status: "SUCCESS" });
             }
@@ -133,6 +158,9 @@ const PaymentController = {
             const serviceName = payments[0].service_name;
             const customerName = payments[0].customer_name;
             const totalAmount = payments[0].total_amount;
+
+            // 🐛 DEBUG: Data yang dipakai untuk notifikasi callback
+            console.log('[Callback] 🐛 DEBUG data notif:', { orderId, mitraId, customerId, orderCode, isSuccess });
 
             // 🔥 UPDATE TANPA updated_at
             await connection.query(
@@ -157,15 +185,25 @@ const PaymentController = {
                 if (mitraId) {
                     notificationService.sendNewOrderNotificationToMitra(
                         mitraId, orderId, customerName, serviceName, orderCode
-                    ).catch(err => console.error('Notif error:', err.message));
+                    )
+                        .then(res => console.log('[Callback] 🐛 DEBUG hasil notif mitra:', res))
+                        .catch(err => console.error('Notif error:', err.message));
+                } else {
+                    console.warn('[Callback] 🐛 DEBUG -> mitraId kosong, notif ke mitra DILEWATI.');
                 }
 
                 if (customerId) {
                     notificationService.sendPaymentSuccessNotificationToCustomer(
                         customerId, orderId, orderCode, totalAmount
-                    ).catch(err => console.error('Notif error:', err.message));
+                    )
+                        .then(res => console.log('[Callback] 🐛 DEBUG hasil notif customer:', res))
+                        .catch(err => console.error('Notif error:', err.message));
+                } else {
+                    console.warn('[Callback] 🐛 DEBUG -> customerId kosong, notif ke customer DILEWATI.');
                 }
             } else {
+                // 🐛 DEBUG: Callback masuk tapi status bukan success
+                console.log(`[Callback] 🐛 DEBUG -> status bukan success (status=${status}, response_code=${response_code}). Tidak ada notif dikirim.`);
                 await connection.commit();
             }
 
@@ -228,6 +266,9 @@ const PaymentController = {
                         data: { payment_status: paymentStatus }
                     });
                 }
+            } else {
+                // 🐛 DEBUG: reff yang di-polling tidak ketemu sama sekali di DB
+                console.warn(`[CheckStatus] 🐛 DEBUG -> reff "${reff}" tidak ditemukan di tabel payments/orders.`);
             }
 
             // 🔥 PERBAIKAN: Gunakan partner_reff yang benar dari database
@@ -250,6 +291,9 @@ const PaymentController = {
             const transactionFound = vendorResult?.total > 0 ||
                 vendorResult?.status === 'SUCCESS' ||
                 Object.keys(vendorResult?.data || {}).length > 0;
+
+            // 🐛 DEBUG: Ringkasan evaluasi hasil vendor sebelum keputusan update DB
+            console.log('[CheckStatus] 🐛 DEBUG evaluasi hasil:', { responseCode, isSuccess, transactionFound, hasPaymentRow: payments.length > 0 });
 
             if (isSuccess && transactionFound && payments.length > 0) {
                 // Update database
