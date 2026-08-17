@@ -2,6 +2,21 @@ const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
+// 🔥 PASTIKAN JWT_SECRET TERBACA
+const JWT_SECRET = process.env.JWT_SECRET;
+
+// 🔥 VALIDASI: Cek apakah JWT_SECRET ada
+if (!JWT_SECRET) {
+    console.error('❌ ERROR: JWT_SECRET tidak ditemukan di environment variables!');
+    console.error('⚠️  Pastikan file .env ada dan berisi JWT_SECRET=...');
+    // Untuk development, bisa menggunakan fallback sementara
+    if (process.env.NODE_ENV === 'development') {
+        console.warn('⚠️  Development mode: Menggunakan default JWT_SECRET');
+        // HANYA UNTUK DEVELOPMENT!
+        process.env.JWT_SECRET = 'dev_secret_key_12345_for_testing_only';
+    }
+}
+
 // Helper function untuk generate transaction code
 const generateTransactionCode = () => {
     const date = new Date();
@@ -36,6 +51,7 @@ const createWalletAndTransaction = async (userId, connection) => {
     }
 };
 
+// ==================== REGISTER ====================
 exports.register = async (req, res) => {
     const { name, email, phone, password, role } = req.body;
     const profile_pic = req.file ? req.file.path : null;
@@ -43,7 +59,6 @@ exports.register = async (req, res) => {
     let connection;
 
     try {
-        // Mulai koneksi dan transaction
         connection = await db.getConnection();
         await connection.beginTransaction();
 
@@ -86,11 +101,12 @@ exports.register = async (req, res) => {
         // 6. Commit transaction
         await connection.commit();
 
-        // 7. Buat token
+        // 🔥 🔥 🔥 PERBAIKAN: Generate token dengan validasi
+        const secretKey = process.env.JWT_SECRET || 'fallback_secret_key';
         const token = jwt.sign(
             { id: userId, role: userRole },
-            process.env.JWT_SECRET,
-            { expiresIn: '1d' }
+            secretKey,
+            { expiresIn: '7d' }  // Ubah jadi 7 hari
         );
 
         res.status(201).json({
@@ -119,6 +135,7 @@ exports.register = async (req, res) => {
     }
 };
 
+// ==================== LOGIN ====================
 exports.login = async (req, res) => {
     const { email, password } = req.body;
 
@@ -159,12 +176,24 @@ exports.login = async (req, res) => {
 
         const wallet = wallets[0] || { balance: 0, pending_balance: 0 };
 
-        // 5. Buat JWT Token — role tetap disertakan di token,
-        //    dipakai frontend untuk menentukan tampilan, bukan untuk blokir login
+        // 🔥 🔥 🔥 PERBAIKAN: Generate token dengan validasi
+        const secretKey = process.env.JWT_SECRET;
+        
+        // 🔥 VALIDASI SEBELUM SIGN
+        if (!secretKey) {
+            console.error('❌ JWT_SECRET tidak ditemukan di environment!');
+            return res.status(500).json({
+                status: false,
+                message: "Konfigurasi server error. Silakan hubungi admin."
+            });
+        }
+
+        console.log('🔐 Generating JWT with secret:', secretKey ? '✅ Secret exists' : '❌ No secret');
+
         const token = jwt.sign(
             { id: user.id, role: user.role },
-            process.env.JWT_SECRET,
-            { expiresIn: '1d' }
+            secretKey,
+            { expiresIn: '7d' }  // Ubah jadi 7 hari
         );
 
         // 6. Response
@@ -195,6 +224,7 @@ exports.login = async (req, res) => {
     }
 };
 
+// ==================== LOGOUT ====================
 exports.logout = async (req, res) => {
     try {
         res.status(200).json({
@@ -209,7 +239,7 @@ exports.logout = async (req, res) => {
     }
 };
 
-// Fungsi tambahan untuk topup saldo
+// ==================== TOPUP BALANCE ====================
 exports.topupBalance = async (req, res) => {
     const { user_id } = req.params;
     const { amount, payment_method } = req.body;
@@ -285,7 +315,7 @@ exports.topupBalance = async (req, res) => {
     }
 };
 
-// Fungsi untuk cek saldo
+// ==================== GET BALANCE ====================
 exports.getBalance = async (req, res) => {
     const { user_id } = req.params;
 
@@ -325,7 +355,7 @@ exports.getBalance = async (req, res) => {
     }
 };
 
-// Fungsi untuk riwayat transaksi
+// ==================== GET TRANSACTION HISTORY ====================
 exports.getTransactionHistory = async (req, res) => {
     const { user_id } = req.params;
     const { limit = 20, offset = 0 } = req.query;
