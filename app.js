@@ -8,44 +8,87 @@ const dotenv = require('dotenv');
 const fs = require('fs');
 
 // =============================================
-// 1. LOAD ENVIRONMENT VARIABLES
+// 1. LOAD ENVIRONMENT VARIABLES - DIPERBAIKI
 // =============================================
-dotenv.config();
 
-// 🔥 🔥 🔥 VALIDASI KRITICAL: Cek JWT_SECRET
-console.log('\n🔐 ========== ENVIRONMENT VALIDATION ==========');
-console.log(`🔐 NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
-console.log(`🔐 PORT: ${process.env.PORT || 5000}`);
+// 🔥 Cek lokasi file .env
+const envPath = path.resolve(process.cwd(), '.env');
+console.log(`📁 Looking for .env at: ${envPath}`);
 
-// 🔥 VALIDASI JWT_SECRET
-if (!process.env.JWT_SECRET) {
-    console.error('❌ FATAL ERROR: JWT_SECRET tidak ditemukan di environment variables!');
-    console.error('⚠️  Pastikan file .env ada dan berisi: JWT_SECRET=your_secret_key');
-    console.error('⚠️  Atau set environment variable JWT_SECRET di platform deployment');
+if (fs.existsSync(envPath)) {
+    console.log('✅ .env file found!');
+    const envContent = fs.readFileSync(envPath, 'utf8');
+    console.log('📄 .env content preview:');
+    console.log(envContent.split('\n').filter(line => line.trim() && !line.startsWith('#')));
+} else {
+    console.error('❌ .env file NOT FOUND at:', envPath);
+    console.error('⚠️  Creating default .env file...');
     
-    // 🔥 Untuk development, bisa pakai fallback (TAPI TIDAK UNTUK PRODUCTION!)
-    if (process.env.NODE_ENV === 'development') {
-        console.warn('⚠️  DEVELOPMENT MODE: Menggunakan fallback JWT_SECRET');
+    // 🔥 Buat .env file secara otomatis
+    const defaultEnv = `PORT=3000
+NODE_ENV=development
+DB_HOST=31.97.48.240
+DB_USER=mysql
+DB_PASS=y8ORze0Ta2a0BRjiInuY3KmZiSLySa9qbf6smZXihcpETIzV6CgOHrOaVGZfhQCz
+DB_NAME=rts
+DB_PORT=3306
+JWT_SECRET=rahasia_super_kuat_amir_2026
+UPLOAD_PATH=/app/uploads
+`;
+    fs.writeFileSync(envPath, defaultEnv);
+    console.log('✅ Default .env file created!');
+}
+
+// 🔥 Load .env dengan path absolut
+dotenv.config({ path: envPath });
+
+// 🔥 🔥 🔥 VALIDASI DENGAN CARA YANG LEBIH BAIK
+console.log('\n🔐 ========== ENVIRONMENT VALIDATION ==========');
+console.log(`🔐 NODE_ENV: ${process.env.NODE_ENV || 'not set'}`);
+console.log(`🔐 PORT: ${process.env.PORT || 'not set'}`);
+
+// 🔥 CEK JWT_SECRET
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET === '') {
+    console.error('❌ JWT_SECRET tidak ditemukan atau kosong!');
+    console.error('⚠️  Menggunakan fallback untuk development...');
+    
+    // 🔥 Fallback untuk development
+    if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
         process.env.JWT_SECRET = 'dev_secret_key_12345_for_testing_only';
-        console.warn('⚠️  WARNING: Ini hanya untuk development!');
+        console.warn('⚠️  DEVELOPMENT MODE: Menggunakan fallback JWT_SECRET');
+        console.warn('⚠️  JANGAN gunakan ini di production!');
     } else {
-        // 🔥 Di production, stop aplikasi jika JWT_SECRET tidak ada
         console.error('❌ Production mode: JWT_SECRET wajib diisi!');
+        console.error('❌ Aplikasi akan berhenti...');
         process.exit(1);
     }
 } else {
     console.log('✅ JWT_SECRET: TERBACA');
+    console.log(`✅ JWT_SECRET length: ${JWT_SECRET.length} characters`);
 }
 
-// 🔥 VALIDASI DATABASE
-if (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_NAME) {
+// 🔥 CEK DATABASE
+const dbConfig = {
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASS,
+    database: process.env.DB_NAME,
+    port: process.env.DB_PORT
+};
+
+console.log('\n📊 Database Configuration:');
+console.log(`   Host: ${dbConfig.host || '❌ MISSING'}`);
+console.log(`   User: ${dbConfig.user || '❌ MISSING'}`);
+console.log(`   Database: ${dbConfig.database || '❌ MISSING'}`);
+console.log(`   Port: ${dbConfig.port || '❌ MISSING'}`);
+
+const dbMissing = Object.values(dbConfig).some(v => !v);
+if (dbMissing) {
     console.error('❌ ERROR: Database configuration tidak lengkap!');
-    console.error('⚠️  Pastikan DB_HOST, DB_USER, DB_NAME terisi di .env');
     if (process.env.NODE_ENV === 'production') {
         process.exit(1);
     }
-} else {
-    console.log('✅ Database config: TERBACA');
 }
 
 console.log('================================================\n');
@@ -63,10 +106,8 @@ const CERTIFICATES_PATH = path.join(UPLOAD_BASE_PATH, 'certificates');
 
 console.log(`\n📁 ========== UPLOAD CONFIGURATION ==========`);
 console.log(`📁 NODE_ENV: ${process.env.NODE_ENV}`);
-console.log(`📁 UPLOAD_PATH env: ${process.env.UPLOAD_PATH || 'NOT SET'}`);
+console.log(`📁 UPLOAD_PATH: ${process.env.UPLOAD_PATH || 'NOT SET'}`);
 console.log(`📁 UPLOAD_BASE_PATH: ${UPLOAD_BASE_PATH}`);
-console.log(`📁 PROFILES_PATH: ${PROFILES_PATH}`);
-console.log(`📁 CERTIFICATES_PATH: ${CERTIFICATES_PATH}`);
 console.log(`============================================\n`);
 
 // Buat folder jika belum ada
@@ -124,31 +165,6 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Static Files
 app.use('/uploads', express.static(UPLOAD_BASE_PATH));
-console.log(`📁 Static files served from: ${UPLOAD_BASE_PATH}`);
-console.log(`📁 Access via: /uploads/`);
-
-// Endpoint untuk cek file (debugging)
-app.get('/uploads/check/:filename', (req, res) => {
-    const filename = req.params.filename;
-    const filepath = path.join(PROFILES_PATH, filename);
-
-    console.log(`🔍 Checking file: ${filepath}`);
-
-    if (fs.existsSync(filepath)) {
-        res.json({
-            success: true,
-            message: 'File exists',
-            path: filepath,
-            url: `/uploads/profiles/${filename}`
-        });
-    } else {
-        res.status(404).json({
-            success: false,
-            message: 'File not found',
-            searchedPath: filepath
-        });
-    }
-});
 
 // =============================================
 // 4. ROUTES
@@ -191,16 +207,6 @@ app.get('/', (req, res) => {
     });
 });
 
-// Endpoint untuk cek status JWT (debug)
-app.get('/health/jwt', (req, res) => {
-    res.json({
-        success: true,
-        jwt_secret_exists: !!process.env.JWT_SECRET,
-        jwt_secret_length: process.env.JWT_SECRET ? process.env.JWT_SECRET.length : 0,
-        environment: process.env.NODE_ENV || 'development'
-    });
-});
-
 // =============================================
 // 6. 404 & ERROR HANDLER
 // =============================================
@@ -226,86 +232,9 @@ app.use((err, req, res, next) => {
 });
 
 // =============================================
-// 7. CRONJOB - ESCROW AUTO RELEASE
+// 7. SERVER INITIALIZATION
 // =============================================
-let escrowCronJob = null;
-let isCronRunning = false;
-
-const startEscrowCron = () => {
-    try {
-        // Cek apakah cron sudah di-start
-        if (isCronRunning) {
-            console.log('⚠️ Escrow cron job already running, skipping...');
-            return;
-        }
-
-        // 🔥 Cek apakah node-cron terinstall
-        let cron;
-        try {
-            cron = require('node-cron');
-        } catch (e) {
-            console.log('⚠️ node-cron not installed, escrow auto-release disabled');
-            console.log('💡 Install with: npm install node-cron');
-            return;
-        }
-
-        const EscrowService = require('./src/services/escrowService');
-
-        // 🔥 Jalankan setiap 5 menit
-        escrowCronJob = cron.schedule('*/5 * * * *', async () => {
-            console.log(`🔄 [${new Date().toISOString()}] Running escrow auto-release check...`);
-
-            try {
-                const result = await EscrowService.processAutoRelease();
-                if (result.processed > 0) {
-                    console.log(`✅ Escrow auto-release completed: ${result.processed} orders processed`);
-                }
-            } catch (error) {
-                console.error('❌ Escrow auto-release error:', error.message);
-            }
-        });
-
-        isCronRunning = true;
-        console.log(`✅ Escrow cron job started (every 5 minutes)`);
-
-        // 🔥 Tampilkan next run dengan cara aman
-        try {
-            if (typeof escrowCronJob.getNextDate === 'function') {
-                const nextDate = escrowCronJob.getNextDate();
-                console.log(`📅 Next run: ${nextDate ? nextDate.toISOString() : 'unknown'}`);
-            } else {
-                console.log(`📅 Cron job scheduled (next run in ~5 minutes)`);
-            }
-        } catch (e) {
-            console.log(`📅 Cron job scheduled (next run in ~5 minutes)`);
-        }
-
-        // 🔥 Jalankan sekali saat startup (setelah 5 detik)
-        setTimeout(async () => {
-            console.log(`🔄 [STARTUP] Running initial escrow check...`);
-            try {
-                const EscrowService = require('./src/services/escrowService');
-                const result = await EscrowService.processAutoRelease();
-                console.log(`✅ Initial escrow check completed: ${result.processed || 0} orders processed`);
-            } catch (error) {
-                console.error('❌ Initial escrow check error:', error.message);
-            }
-        }, 5000);
-
-    } catch (error) {
-        if (error.code === 'MODULE_NOT_FOUND') {
-            console.log('⚠️ node-cron not installed, escrow auto-release disabled');
-            console.log('💡 Install with: npm install node-cron');
-        } else {
-            console.error('❌ Failed to start escrow cron job:', error.message);
-        }
-    }
-};
-
-// =============================================
-// 8. SERVER INITIALIZATION
-// =============================================
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () => {
     console.log(`
     ════════════════════════════════════════════════
@@ -314,63 +243,40 @@ const server = app.listen(PORT, () => {
     📅 Time: ${new Date().toLocaleString('id-ID')}
     🔐 JWT: ${process.env.JWT_SECRET ? '✅ Terkonfigurasi' : '❌ TIDAK ADA!'}
     📁 Uploads directory: ${UPLOAD_BASE_PATH}
-    📁 Profiles directory: ${PROFILES_PATH}
-    📁 Certificates directory: ${CERTIFICATES_PATH}
     ════════════════════════════════════════════════
     `);
-
-    // 🔥 Start Escrow Cron Job
-    startEscrowCron();
 });
 
 // =============================================
-// 9. GRACEFUL SHUTDOWN
+// 8. GRACEFUL SHUTDOWN
 // =============================================
 
 const gracefulShutdown = async () => {
     console.log('🛑 Received shutdown signal, closing server...');
-
-    // Stop cron job
-    if (escrowCronJob) {
-        try {
-            escrowCronJob.stop();
-            console.log('✅ Escrow cron job stopped');
-        } catch (error) {
-            console.error('❌ Error stopping cron job:', error.message);
-        }
-    }
-
-    // Close server
     server.close(() => {
         console.log('✅ Server closed');
         process.exit(0);
     });
 
-    // Force close after 10 seconds
     setTimeout(() => {
         console.error('⚠️ Force shutting down after timeout');
         process.exit(1);
     }, 10000);
 };
 
-// Handle shutdown signals
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
 
-// Handle Unhandled Rejections
 process.on('unhandledRejection', (err) => {
     console.log('❌ UNHANDLED REJECTION! 💥');
     console.log(err.name, err.message);
     console.log(err.stack);
-    // Keep server running, but log error
 });
 
-// Handle Uncaught Exceptions
 process.on('uncaughtException', (err) => {
     console.log('❌ UNCAUGHT EXCEPTION! 💥');
     console.log(err.name, err.message);
     console.log(err.stack);
-    // Keep server running, but log error
 });
 
 module.exports = app;
