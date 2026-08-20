@@ -178,6 +178,8 @@ const walletRoutes = require('./src/routes/walletRoutes');
 const serviceRoutes = require('./src/routes/serviceRoutes');
 const deviceTokenRoutes = require('./src/routes/deviceTokenRoutes');
 const escrowRoutes = require('./src/routes/escrowRoutes');
+const voucherRoutes = require('./routes/voucherRoutes');
+const voucherPublicRoutes = require('./routes/voucherPublicRoutes');
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', userRoutes);
@@ -188,6 +190,8 @@ app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/services', serviceRoutes);
 app.use('/api/v1/devices', deviceTokenRoutes);
 app.use('/api/v1/escrow', escrowRoutes);
+app.use('/api/admin/vouchers', voucherRoutes);
+app.use('/api/customer/vouchers', voucherPublicRoutes);
 
 // =============================================
 // 5. ROOT HEALTH CHECK
