@@ -4,6 +4,7 @@ const db = require('../config/db');
 exports.getActiveVouchers = async (req, res) => {
     try {
         const { service_id } = req.query;
+        const baseUrl = `${req.protocol}://${req.get('host')}/uploads/vouchers`;
 
         let where = `WHERE status = 'active' AND NOW() BETWEEN start_date AND end_date
                       AND (quota IS NULL OR used_count < quota)
@@ -18,14 +19,19 @@ exports.getActiveVouchers = async (req, res) => {
         }
 
         const [rows] = await db.query(
-            `SELECT id, code, title, description, discount_type, discount_value, 
+            `SELECT id, code, title, description, image, discount_type, discount_value, 
                     max_discount_amount, min_transaction, applicable_service_id, start_date, end_date
              FROM vouchers ${where}
              ORDER BY created_at DESC`,
             params
         );
 
-        return res.json({ success: true, data: rows });
+        const data = rows.map(v => ({
+            ...v,
+            image_url: v.image ? `${baseUrl}/${v.image}` : null
+        }));
+
+        return res.json({ success: true, data });
     } catch (err) {
         console.error('getActiveVouchers error:', err);
         return res.status(500).json({ success: false, message: 'Terjadi kesalahan server' });

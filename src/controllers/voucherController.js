@@ -1,4 +1,6 @@
 const db = require('../config/db');
+const fs = require('fs');
+const path = require('path');
 
 // CREATE voucher
 exports.createVoucher = async (req, res) => {
@@ -10,7 +12,7 @@ exports.createVoucher = async (req, res) => {
         } = req.body;
 
         if (!code || !title || !discount_type || !discount_value || !start_date || !end_date) {
-            return res.status(400).json({ success: false, message: 'Field wajib belum lengkap (code, title, discount_type, discount_value, start_date, end_date)' });
+            return res.status(400).json({ success: false, message: 'Field wajib belum lengkap' });
         }
 
         const [existing] = await db.query('SELECT id FROM vouchers WHERE code = ?', [code]);
@@ -18,12 +20,14 @@ exports.createVoucher = async (req, res) => {
             return res.status(409).json({ success: false, message: 'Kode voucher sudah digunakan' });
         }
 
+        const image = req.file ? req.file.filename : null;
+
         const [result] = await db.query(
             `INSERT INTO vouchers 
-            (code, title, description, discount_type, discount_value, max_discount_amount, min_transaction, quota, max_use_per_user, applicable_service_id, applicable_role, start_date, end_date, status, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (code, title, description, image, discount_type, discount_value, max_discount_amount, min_transaction, quota, max_use_per_user, applicable_service_id, applicable_role, start_date, end_date, status, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                code, title, description || null, discount_type, discount_value,
+                code, title, description || null, image, discount_type, discount_value,
                 max_discount_amount || null, min_transaction || 0, quota || null,
                 max_use_per_user || 1, applicable_service_id || null,
                 applicable_role || 'customer', start_date, end_date,
@@ -31,13 +35,12 @@ exports.createVoucher = async (req, res) => {
             ]
         );
 
-        return res.status(201).json({ success: true, message: 'Voucher berhasil dibuat', data: { id: result.insertId } });
+        return res.status(201).json({ success: true, message: 'Voucher berhasil dibuat', data: { id: result.insertId, image } });
     } catch (err) {
         console.error('createVoucher error:', err);
         return res.status(500).json({ success: false, message: 'Terjadi kesalahan server' });
     }
 };
-
 // READ - semua voucher (dengan filter & pagination)
 exports.getAllVouchers = async (req, res) => {
     try {
@@ -106,26 +109,36 @@ exports.updateVoucher = async (req, res) => {
             applicable_service_id, applicable_role, start_date, end_date, status
         } = req.body;
 
-        const [existing] = await db.query('SELECT id FROM vouchers WHERE id = ?', [id]);
+        const [existing] = await db.query('SELECT * FROM vouchers WHERE id = ?', [id]);
         if (existing.length === 0) {
             return res.status(404).json({ success: false, message: 'Voucher tidak ditemukan' });
         }
 
+        let image = existing[0].image;
+        if (req.file) {
+            // hapus file lama kalau ada
+            if (image) {
+                const oldPath = path.join(__dirname, '../../public/uploads/vouchers', image);
+                if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+            }
+            image = req.file.filename;
+        }
+
         await db.query(
             `UPDATE vouchers SET
-                title = ?, description = ?, discount_type = ?, discount_value = ?,
+                title = ?, description = ?, image = ?, discount_type = ?, discount_value = ?,
                 max_discount_amount = ?, min_transaction = ?, quota = ?, max_use_per_user = ?,
                 applicable_service_id = ?, applicable_role = ?, start_date = ?, end_date = ?, status = ?
             WHERE id = ?`,
             [
-                title, description || null, discount_type, discount_value,
+                title, description || null, image, discount_type, discount_value,
                 max_discount_amount || null, min_transaction || 0, quota || null,
                 max_use_per_user || 1, applicable_service_id || null,
                 applicable_role || 'customer', start_date, end_date, status, id
             ]
         );
 
-        return res.json({ success: true, message: 'Voucher berhasil diperbarui' });
+        return res.json({ success: true, message: 'Voucher berhasil diperbarui', data: { image } });
     } catch (err) {
         console.error('updateVoucher error:', err);
         return res.status(500).json({ success: false, message: 'Terjadi kesalahan server' });
