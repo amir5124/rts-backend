@@ -1,11 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const voucherController = require('../controllers/voucherController');
-const { adminAuth } = require('../middlewares/auth');
 const uploadVoucher = require('../middlewares/uploadVoucher');
 
-router.use(adminAuth);
+// Hapus baris ini: router.use(adminAuth);
 
+// Route tanpa autentikasi admin
 router.post('/', uploadVoucher.single('image'), voucherController.createVoucher);
 router.get('/', voucherController.getAllVouchers);
 router.get('/:id', voucherController.getVoucherById);
