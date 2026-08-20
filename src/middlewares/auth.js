@@ -96,6 +96,44 @@ const isCustomer = (req, res, next) => {
 };
 
 /**
+ * 🔥 Middleware Auth Opsional
+ * Kalau ada token valid → isi req.user (untuk cek limit pemakaian per user, dsb)
+ * Kalau tidak ada token / token invalid / user tidak aktif → tetap lanjut sebagai guest (req.user = null)
+ * Dipakai untuk endpoint yang boleh diakses tanpa login, tapi tetap "mengenali" user kalau sedang login
+ */
+const optionalAuth = async (req, res, next) => {
+    const token = req.headers.authorization?.split(' ')[1];
+
+    if (!token) {
+        req.user = null;
+        return next();
+    }
+
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET, {
+            ignoreExpiration: true
+        });
+
+        const [rows] = await db.query(
+            'SELECT id, name, email, phone, role, is_active FROM users WHERE id = ?',
+            [decoded.id]
+        );
+
+        if (rows.length === 0 || !rows[0].is_active) {
+            req.user = null;
+            return next();
+        }
+
+        req.user = { ...decoded, ...rows[0] };
+        next();
+    } catch (error) {
+        // token ada tapi invalid/corrupt → tetap lanjut sebagai guest, jangan blokir
+        req.user = null;
+        next();
+    }
+};
+
+/**
  * 🔥 Middleware Auth (alias dari verifyToken untuk kompatibilitas)
  */
 const authMiddleware = verifyToken;
@@ -123,5 +161,6 @@ module.exports = {
     authMiddleware,
     adminAuth,
     mitraAuth,
-    customerAuth
+    customerAuth,
+     optionalAuth
 };

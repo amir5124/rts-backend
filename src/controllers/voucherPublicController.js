@@ -42,11 +42,8 @@ exports.getActiveVouchers = async (req, res) => {
 exports.checkVoucher = async (req, res) => {
     try {
         const { code, service_id, total_amount } = req.body;
-        const userId = req.user?.id; // dari middleware verifyToken
+        const userId = req.user?.id || null; // boleh null kalau guest / tidak login
 
-        if (!userId) {
-            return res.status(401).json({ success: false, message: 'Silakan login terlebih dahulu' });
-        }
         if (!code || !total_amount) {
             return res.status(400).json({ success: false, message: 'Kode voucher dan total_amount wajib diisi' });
         }
@@ -63,17 +60,14 @@ exports.checkVoucher = async (req, res) => {
 
         const voucher = vouchers[0];
 
-        // Cek kuota
         if (voucher.quota !== null && voucher.used_count >= voucher.quota) {
             return res.status(400).json({ success: false, message: 'Kuota voucher sudah habis' });
         }
 
-        // Cek berlaku untuk layanan tertentu
         if (voucher.applicable_service_id && Number(voucher.applicable_service_id) !== Number(service_id)) {
             return res.status(400).json({ success: false, message: 'Voucher tidak berlaku untuk layanan ini' });
         }
 
-        // Cek minimal transaksi
         if (Number(total_amount) < Number(voucher.min_transaction)) {
             return res.status(400).json({
                 success: false,
@@ -81,16 +75,17 @@ exports.checkVoucher = async (req, res) => {
             });
         }
 
-        // Cek limit pemakaian per user
-        const [usageRows] = await db.query(
-            'SELECT COUNT(*) AS total FROM voucher_usages WHERE voucher_id = ? AND user_id = ?',
-            [voucher.id, userId]
-        );
-        if (usageRows[0].total >= voucher.max_use_per_user) {
-            return res.status(400).json({ success: false, message: 'Kamu sudah mencapai batas pemakaian voucher ini' });
+        // Cek limit pemakaian per user — hanya berlaku kalau user sedang login
+        if (userId) {
+            const [usageRows] = await db.query(
+                'SELECT COUNT(*) AS total FROM voucher_usages WHERE voucher_id = ? AND user_id = ?',
+                [voucher.id, userId]
+            );
+            if (usageRows[0].total >= voucher.max_use_per_user) {
+                return res.status(400).json({ success: false, message: 'Kamu sudah mencapai batas pemakaian voucher ini' });
+            }
         }
 
-        // Hitung diskon
         let discountAmount = 0;
         if (voucher.discount_type === 'percentage') {
             discountAmount = (Number(total_amount) * Number(voucher.discount_value)) / 100;
