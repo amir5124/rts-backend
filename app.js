@@ -178,8 +178,8 @@ const walletRoutes = require('./src/routes/walletRoutes');
 const serviceRoutes = require('./src/routes/serviceRoutes');
 const deviceTokenRoutes = require('./src/routes/deviceTokenRoutes');
 const escrowRoutes = require('./src/routes/escrowRoutes');
-const voucherRoutes = require('.src/routes/voucherRoutes');
-const voucherPublicRoutes = require('.src/routes/voucherPublicRoutes');
+const voucherRoutes = require('./src/routes/voucherRoutes');
+const voucherPublicRoutes = require('./src/routes/voucherPublicRoutes');
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', userRoutes);
