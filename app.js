@@ -191,7 +191,7 @@ app.use('/api/v1/services', serviceRoutes);
 app.use('/api/v1/devices', deviceTokenRoutes);
 app.use('/api/v1/escrow', escrowRoutes);
 app.use('/api/v1/admin/vouchers', voucherRoutes);
-app.use('/api/customer/vouchers', voucherPublicRoutes);
+app.use('/api/v1/customer/vouchers', voucherPublicRoutes);
 
 // =============================================
 // 5. ROOT HEALTH CHECK

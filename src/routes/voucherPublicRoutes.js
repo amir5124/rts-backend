@@ -7,6 +7,6 @@ const { verifyToken, customerAuth } = require('../middlewares/auth');
 router.get('/', voucherPublicController.getActiveVouchers);
 
 // Cek/validasi voucher — wajib login sebagai customer (butuh user_id untuk cek limit pemakaian)
-router.post('/check', customerAuth, voucherPublicController.checkVoucher);
+router.post('/check',voucherPublicController.checkVoucher);
 
 module.exports = router;
